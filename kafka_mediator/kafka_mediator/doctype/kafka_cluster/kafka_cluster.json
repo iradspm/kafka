@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:CLUSTER-{###}",
+ "creation": "2025-06-10 22:26:07.181250",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bootstrap_servers",
+  "security_protocol",
+  "sasl_mechanism",
+  "column_break_edad",
+  "sasl_username",
+  "sasl_password",
+  "status",
+  "topic_count"
+ ],
+ "fields": [
+  {
+   "fieldname": "bootstrap_servers",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bootstrap Servers",
+   "reqd": 1
+  },
+  {
+   "default": "PLAINTEXT",
+   "fieldname": "security_protocol",
+   "fieldtype": "Select",
+   "label": "Security Protocol",
+   "options": "PLAINTEXT\nSASL_PLAINTEXT\nSASL_SSL"
+  },
+  {
+   "fieldname": "sasl_mechanism",
+   "fieldtype": "Select",
+   "label": "SASL Mechanism",
+   "options": "\nPLAIN\nSCRAM-SHA-256\nSCRAM-SHA-512"
+  },
+  {
+   "fieldname": "column_break_edad",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sasl_username",
+   "fieldtype": "Data",
+   "label": "SASL Username"
+  },
+  {
+   "fieldname": "sasl_password",
+   "fieldtype": "Password",
+   "label": "SASL Password"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "topic_count",
+   "fieldtype": "Int",
+   "label": "Topic Count",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-06-10 22:40:54.560765",
+ "modified_by": "Administrator",
+ "module": "Kafka Mediator",
+ "name": "Kafka Cluster",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

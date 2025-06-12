@@ -1,0 +1,134 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:{consumer_group}-{###}",
+ "creation": "2025-06-10 22:51:09.715498",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cluster",
+  "topic",
+  "consumer_group",
+  "api_endpoint",
+  "api_username",
+  "api_password",
+  "api_key",
+  "column_break_vvtf",
+  "output_topic",
+  "output_producer",
+  "max_lag_threshold",
+  "max_consumers",
+  "current_lag",
+  "enabled"
+ ],
+ "fields": [
+  {
+   "fieldname": "cluster",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Cluster",
+   "options": "Kafka Cluster",
+   "reqd": 1
+  },
+  {
+   "fieldname": "topic",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Topic",
+   "options": "Kafka Topic",
+   "reqd": 1
+  },
+  {
+   "fieldname": "consumer_group",
+   "fieldtype": "Data",
+   "label": "Consumer Group"
+  },
+  {
+   "fieldname": "api_endpoint",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "API Endpoint",
+   "reqd": 1
+  },
+  {
+   "fieldname": "api_username",
+   "fieldtype": "Data",
+   "label": "API Username"
+  },
+  {
+   "fieldname": "api_password",
+   "fieldtype": "Password",
+   "label": "API Password"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Data",
+   "label": "API Key"
+  },
+  {
+   "fieldname": "column_break_vvtf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "output_topic",
+   "fieldtype": "Link",
+   "label": "Output Topic",
+   "options": "Kafka Topic"
+  },
+  {
+   "fieldname": "output_producer",
+   "fieldtype": "Link",
+   "label": "Output Producer",
+   "options": "Kafka Producer"
+  },
+  {
+   "default": "1000",
+   "fieldname": "max_lag_threshold",
+   "fieldtype": "Int",
+   "label": "Max Lag Threshold"
+  },
+  {
+   "default": "20",
+   "fieldname": "max_consumers",
+   "fieldtype": "Int",
+   "label": "Max Consumers"
+  },
+  {
+   "fieldname": "current_lag",
+   "fieldtype": "Int",
+   "label": "Current Lag",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-06-10 23:06:16.755724",
+ "modified_by": "Administrator",
+ "module": "Kafka Mediator",
+ "name": "Kafka Consumer",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
