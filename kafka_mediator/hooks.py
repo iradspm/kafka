@@ -166,6 +166,12 @@ app_license = "mit"
 # 	],
 # }
 
+scheduler_events = {
+    "cron": {
+        "*/5 * * * *" : ["kafka_mediator.kafka_mediator.doctype.kafka_cluster.kafka_cluster.monitor_kafka_metrics"]
+    }
+}
+
 # Testing
 # -------
 
