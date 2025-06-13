@@ -18,7 +18,7 @@
  "fields": [
   {
    "fieldname": "bootstrap_servers",
-   "fieldtype": "Data",
+   "fieldtype": "Text",
    "in_list_view": 1,
    "label": "Bootstrap Servers",
    "reqd": 1
@@ -65,7 +65,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-10 22:40:54.560765",
+ "modified": "2025-06-12 23:29:23.127243",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Cluster",
@@ -85,6 +85,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []
