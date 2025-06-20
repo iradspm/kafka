@@ -13,13 +13,20 @@
   "api_username",
   "api_password",
   "api_key",
+  "enabled",
   "column_break_vvtf",
   "output_topic",
+  "failure_topic",
   "output_producer",
+  "min_lag_threshold",
   "max_lag_threshold",
   "max_consumers",
   "current_lag",
-  "enabled"
+  "low_lag_count",
+  "scale_up_cooldown",
+  "scale_down_cooldown",
+  "last_scale_up_time",
+  "last_scale_down_time"
  ],
  "fields": [
   {
@@ -104,11 +111,53 @@
    "fieldname": "enabled",
    "fieldtype": "Check",
    "label": "Enabled"
+  },
+  {
+   "fieldname": "failure_topic",
+   "fieldtype": "Link",
+   "label": "Failure Topic",
+   "options": "Kafka Topic"
+  },
+  {
+   "default": "100",
+   "fieldname": "min_lag_threshold",
+   "fieldtype": "Int",
+   "label": "Min Lag Threshold"
+  },
+  {
+   "fieldname": "low_lag_count",
+   "fieldtype": "Int",
+   "label": "Low Lag Count",
+   "read_only": 1
+  },
+  {
+   "default": "120",
+   "fieldname": "scale_up_cooldown",
+   "fieldtype": "Int",
+   "label": "Scale Up Cooldown (Seconds)"
+  },
+  {
+   "default": "600",
+   "fieldname": "scale_down_cooldown",
+   "fieldtype": "Int",
+   "label": "Scale Down Cooldown (Seconds)"
+  },
+  {
+   "fieldname": "last_scale_up_time",
+   "fieldtype": "Float",
+   "label": "Last Scale Up Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_scale_down_time",
+   "fieldtype": "Float",
+   "label": "Last Scale Down Time",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-10 23:06:16.755724",
+ "modified": "2025-06-20 20:22:21.970551",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Consumer",
@@ -128,6 +177,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

@@ -26,6 +26,7 @@ class KafkaConsumer(Document):
 			'sasl.mechanisms': cluster.sasl_mechanism or None,
 			'sasl.username': cluster.sasl_username or None,
 			'sasl.password': cluster.sasl_password or None
+
 		}
 		try:
 			admin_client = AdminClient(conf)
@@ -44,17 +45,23 @@ class KafkaConsumer(Document):
 
 	def after_insert(self):
 		try:
-			# Capture site name in HTTP context
 			site = frappe.local.site
-			# Start the consumer thread, passing the site name
 			threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
 			logger.info(f"Consumer {self.name} thread started for topic {self.topic}")
 		except Exception as e:
 			frappe.log_error(f"Failed to start consumer thread {self.name}: {str(e)}")
 			frappe.throw(f"Failed to start consumer thread: {str(e)}")
 
+	def restart_consumer_thread(self):
+		"""Manually restart consumer thread when enabled."""
+		try:
+			site = frappe.local.site
+			threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
+			logger.info(f"Consumer {self.name} thread restarted for topic {self.topic}")
+		except Exception as e:
+			frappe.log_error(f"Failed to restart consumer thread {self.name}: {str(e)}")
+
 	def consume_messages(self, site):
-		# Initialize Frappe context using passed site name
 		try:
 			frappe.init(site=site)
 			frappe.connect()
@@ -74,7 +81,7 @@ class KafkaConsumer(Document):
 				consumer = Consumer(conf)
 				consumer.subscribe([self.topic])
 				logger.info(f"Consumer {self.name} initialized and subscribed to topic {self.topic}")
-				while True:
+				while self.enabled:
 					try:
 						msg = consumer.poll(1.0)
 						if msg is None:
@@ -101,6 +108,24 @@ class KafkaConsumer(Document):
 								logger.info(f"Response published to {self.output_topic} by consumer {self.name}")
 							finally:
 								producer.flush()
+						elif not response and self.failure_topic:
+							producer_conf = {
+								'bootstrap.servers': cluster.bootstrap_servers,
+								'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+								'sasl.mechanisms': cluster.sasl_mechanism or None,
+								'sasl.username': cluster.sasl_username or None,
+								'sasl.password': cluster.sasl_password or None,
+								'acks': 'all',
+								'retries': 3
+							}
+							producer = Producer(producer_conf)
+							try:
+								error_message = json.dumps({"message": message, "error": "API call failed"})
+								producer.produce(self.failure_topic, value=error_message.encode('utf-8'))
+								producer.flush(timeout=10)
+								logger.info(f"Failed message published to {self.failure_topic} by consumer {self.name}")
+							finally:
+								producer.flush()
 						consumer.commit()
 					except Exception as e:
 						frappe.log_error(f"Consumer {self.name} processing failed: {str(e)}")
@@ -116,7 +141,6 @@ class KafkaConsumer(Document):
 		except Exception as e:
 			logger.error(f"Failed to initialize Frappe context for consumer {self.name}: {str(e)}")
 		finally:
-			# Clean up Frappe context
 			try:
 				frappe.destroy()
 			except:
@@ -131,7 +155,7 @@ class KafkaConsumer(Document):
 			elif self.api_key:
 				headers['Authorization'] = f"Bearer {self.api_key}"
 
-			response = requests.post(self.api_endpoint, data=message, headers=headers, timeout=10)
+			response = requests.post(self.api_endpoint, data=json.dumps({'message': message}), headers=headers, timeout=10)
 			if response.status_code == 200:
 				logger.info(f"API call successful for consumer {self.name}")
 				return response.text

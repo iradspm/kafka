@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 class KafkaProducer(Document):
 	def validate(self):
-        # Validate that the topic exists in Kafka
 		cluster = frappe.get_doc("Kafka Cluster", self.cluster)
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
@@ -30,7 +29,7 @@ class KafkaProducer(Document):
 				frappe.throw(f"Topic {self.topic} does not exist in Kafka cluster {self.cluster}")
 			logger.info(f"Validated topic {self.topic} for producer {self.name}")
 		except Exception as e:
-			frappe.log_error(f"Failed to validate topic for producer {self.name}: {str(e)}", title="Kafka Producer Validation Error")
+			frappe.log_error(f"Failed to validate topic for producer {self.name}: {str(e)}")
 			frappe.throw(f"Failed to validate topic: {str(e)}")
 		finally:
 			try:
@@ -57,7 +56,7 @@ class KafkaProducer(Document):
 			frappe.msgprint(f"Message published to topic {self.topic}")
 			logger.info(f"Message published to {self.topic} by producer {self.name}")
 		except Exception as e:
-			frappe.log_error(f"Failed to publish message for producer {self.name}: {str(e)}", title="Kafka Producer Publish Error")
+			frappe.log_error(f"Failed to publish message for producer {self.name}: {str(e)}")
 			frappe.throw(f"Failed to publish message: {str(e)}")
 		finally:
 			try:

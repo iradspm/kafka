@@ -1,0 +1,90 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"dapSnmK_Gs\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Kafka Mediator</span>\",\"col\":12}},{\"id\":\"Wb3kL_E6GI\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Clusters\",\"col\":3}},{\"id\":\"otnQ_BCCLg\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Topics\",\"col\":3}},{\"id\":\"2etyaiqvSr\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Active Consumers\",\"col\":3}},{\"id\":\"bW3rxDSN0F\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Average Lag\",\"col\":3}},{\"id\":\"AZFfz5nuvA\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ErcVNULBA1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Clusters\",\"col\":3}},{\"id\":\"pW-i0Vl90I\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Topics\",\"col\":3}},{\"id\":\"XK0uLQwb1o\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Active Consumers\",\"col\":3}},{\"id\":\"JqF3OlnPOa\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Producers\",\"col\":3}},{\"id\":\"zSrR2tc7ib\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"sg7RNeoEx_\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Settings</b></span>\",\"col\":12}},{\"id\":\"Z-lvD6I5VM\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Kafka Settings\",\"col\":3}}]",
+ "creation": "2025-06-20 20:24:09.246870",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "message-1",
+ "idx": 0,
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "Kafka Mediator",
+ "links": [],
+ "modified": "2025-06-20 20:38:35.575998",
+ "modified_by": "Administrator",
+ "module": "Kafka Mediator",
+ "name": "Kafka Mediator",
+ "number_cards": [
+  {
+   "label": "Clusters",
+   "number_card_name": "Kafka Clusters"
+  },
+  {
+   "label": "Topics",
+   "number_card_name": "Topics"
+  },
+  {
+   "label": "Active Consumers",
+   "number_card_name": "Active Consumers"
+  },
+  {
+   "label": "Average Lag",
+   "number_card_name": "Average Lag"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 1.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "format": "{} Clusters",
+   "label": "Clusters",
+   "link_to": "Kafka Cluster",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "format": "{} Topics",
+   "label": "Topics",
+   "link_to": "Kafka Topic",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} Consumers",
+   "label": "Active Consumers",
+   "link_to": "Kafka Consumer",
+   "stats_filter": "[[\"Kafka Consumer\",\"enabled\",\"=\",1,false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Pink",
+   "doc_view": "List",
+   "format": "{} Producers",
+   "label": "Producers",
+   "link_to": "Kafka Producer",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Kafka Settings",
+   "link_to": "Kafka Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "Kafka Mediator"
+}
