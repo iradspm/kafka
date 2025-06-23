@@ -25,10 +25,16 @@ class KafkaCluster(Document):
 			topics = admin_client.list_topics(timeout=10)
 			self.status = "Connected"
 			self.topic_count = len(topics.topics)
+			logger.info(f"Validated cluster {self.name} with {self.topic_count} topics")
 		except Exception as e:
 			self.status = "Failed"
-			frappe.log_error(f"Failed to connect to Kafka cluster: {str(e)}")
+			#frappe.log_error(f"Failed to connect to Kafka cluster: {str(e)}")
 			frappe.throw(f"Failed to connect to Kafka cluster: {str(e)}")
+		finally:
+			try:
+				admin_client.close() if 'admin_client' in locals() else None
+			except:
+				pass
 	
 	def after_insert(self):
         # Sync existing Kafka topics
@@ -42,20 +48,52 @@ class KafkaCluster(Document):
 			}
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
-			for topic_name in topics.topics:
+			topic_keys = list(topics.topics.keys())
+			logger.info(f"Retrieved topics for cluster {self.name}: {topic_keys}")
+			if not topic_keys:
+				logger.warning(f"No topics found for cluster {self.name}")
+				return
+
+			# Fetch replication factors using describe_topics
+			describe_futures = admin_client.describe_topics(topics=[t for t in topic_keys if not t.startswith('__')], request_timeout=10)
+			replication_factors = {}
+			for topic_name, future in describe_futures.items():
+				try:
+					topic_desc = future.result()
+					replication_factors[topic_name] = len(topic_desc.partitions[0].replicas) if topic_desc.partitions else 1
+				except Exception as e:
+					logger.error(f"Failed to get replication factor for {topic_name}: {str(e)}")
+					replication_factors[topic_name] = 1  # Fallback
+
+			synced_count = 0
+			for topic_name in topic_keys:
+				logger.info(f"Processing topic: {topic_name}")
 				# Skip internal Kafka topics
 				if topic_name.startswith('__'):
+					logger.info(f"Skipping internal topic: {topic_name}")
 					continue
 				# Check if topic already exists
-				if not frappe.db.exists("Kafka Topic", {"topic_name": topic_name}):
-					frappe.db.insert({
-						"doctype": "Kafka Topic",
-						"cluster": self.name,
-						"topic_name": topic_name,
-						"num_partitions": len(topics.topics[topic_name].partitions),
-						"replication_factor": 1  # Cannot reliably fetch replication factor
-					})
-			logger.info(f"Synced {len(topics.topics)} topics for cluster {self.name}")
+				exists = frappe.db.exists("Kafka Topic", {"topic_name": topic_name})
+				logger.info(f"Topic {topic_name} exists in doctype: {exists}")
+				if not exists:
+					try:
+						topic_doc = frappe.get_doc({
+							"doctype": "Kafka Topic",
+							"cluster": self.name,
+							"topic_name": topic_name,
+							"num_partitions": len(topics.topics[topic_name].partitions),
+							"replication_factor": replication_factors.get(topic_name, 1)
+						})
+						topic_doc.db_insert()
+						frappe.db.commit()
+						logger.info(f"Synced topic {topic_name} with {len(topics.topics[topic_name].partitions)} partitions, replication factor {replication_factors.get(topic_name, 1)}")
+						synced_count += 1
+					except Exception as e:
+						logger.error(f"Failed to sync topic {topic_name}: {str(e)}")
+						continue
+				else:
+					logger.info(f"Topic {topic_name} already exists, skipping")
+			logger.info(f"Completed sync: {synced_count} topics synced for cluster {self.name}")
 		except Exception as e:
 			frappe.log_error(f"Failed to sync topics for cluster {self.name}: {str(e)}")
 		finally:

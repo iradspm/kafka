@@ -1,0 +1,93 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-06-23 15:32:06.002297",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cluster",
+  "broker_status",
+  "last_updated",
+  "column_break_jysu",
+  "total_topics",
+  "total_messages",
+  "total_lag",
+  "total_consumers"
+ ],
+ "fields": [
+  {
+   "fieldname": "cluster",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Cluster",
+   "options": "Kafka Cluster",
+   "reqd": 1
+  },
+  {
+   "fieldname": "broker_status",
+   "fieldtype": "Data",
+   "label": "Broker Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_updated",
+   "fieldtype": "Datetime",
+   "label": "Last Updated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_jysu",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_topics",
+   "fieldtype": "Int",
+   "label": "Total Topics",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_messages",
+   "fieldtype": "Int",
+   "label": "Total Messages",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_lag",
+   "fieldtype": "Int",
+   "label": "Total Lag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_consumers",
+   "fieldtype": "Int",
+   "label": "Total Consumers",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-06-23 15:34:39.921700",
+ "modified_by": "Administrator",
+ "module": "Kafka Mediator",
+ "name": "Kafka Cluster Stats",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -2,9 +2,11 @@ __version__ = "0.0.1"
 
 import frappe
 import confluent_kafka
-from confluent_kafka import Consumer, TopicPartition
+from confluent_kafka import Consumer, TopicPartition, TopicCollection
+from confluent_kafka.admin import AdminClient
 import time
 import logging
+import uuid
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -198,6 +200,159 @@ def cleanup_orphaned_consumers():
                 except Exception as e:
                     frappe.log_error(f"Failed to delete orphaned consumer {consumer.name}: {str(e)}")
 
+@frappe.whitelist()
+def update_topic_stats():
+    """Update message count, lag, active consumers, and replication factor for all topics."""
+    topics = frappe.get_all("Kafka Topic", fields=["name", "topic_name", "cluster"])
+    for topic in topics:
+        cluster = frappe.get_doc("Kafka Cluster", topic.cluster)
+        conf = {
+            'bootstrap.servers': cluster.bootstrap_servers,
+            'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+            'sasl.mechanisms': cluster.sasl_mechanism or None,
+            'sasl.username': cluster.sasl_username,
+            'sasl.password': cluster.sasl_password or None,
+            'group.id': f"stats_{topic.name}_{uuid.uuid4()}"
+        }
+        consumer = None
+        admin_client = None
+        try:
+            consumer = Consumer(conf)
+            admin_client = AdminClient(conf)
+            metadata = consumer.list_topics(topic=topic.topic_name, timeout=10)
+            if topic.topic_name not in metadata.topics:
+                logger.warning(f"Topic {topic.topic_name} not found in Kafka cluster {topic.cluster}")
+                continue
+            partitions = [TopicPartition(topic.topic_name, p) for p in metadata.topics[topic.topic_name].partitions]
+            if not partitions:
+                logger.warning(f"No partitions found for topic {topic.topic_name}")
+                frappe.db.set_value("Kafka Topic", topic.name, {
+                    "message_count": 0,
+                    "lag": 0,
+                    "active_consumers": 0,
+                    "replication_factor": 1,
+                    "last_updated": frappe.utils.now()
+                })
+                frappe.db.commit()
+                continue
+            message_count = 0
+            for partition in partitions:
+                try:
+                    low, high = consumer.get_watermark_offsets(partition)
+                    message_count += high - low if high > low else 0
+                except Exception as e:
+                    logger.error(f"Failed to get watermark for partition {partition.partition} of topic {topic.topic_name}: {str(e)}")
+                    continue
+            active_consumers = len(frappe.get_all("Kafka Consumer", filters={
+                "topic": topic.topic_name, "enabled": 1
+            }))
+            lag = 0
+            consumer_groups = frappe.get_all("Kafka Consumer", filters={"topic": topic.topic_name}, fields=["consumer_group"], distinct=True)
+            for group in consumer_groups:
+                try:
+                    conf['group.id'] = group.consumer_group
+                    lag += check_consumer_lag(conf, topic.topic_name, group.consumer_group)
+                except Exception as e:
+                    logger.error(f"Failed to get lag for consumer group {group.consumer_group} for topic {topic.topic_name}: {str(e)}")
+                    continue
+            # Fetch replication factor
+            describe_futures = admin_client.describe_topics(topics=TopicCollection([topic.topic_name]), request_timeout=30)
+            replication_factor = 1
+            try:
+                topic_desc = describe_futures[topic.topic_name].result()
+                replication_factor = len(topic_desc.partitions[0].replicas) if topic_desc.partitions else 1
+            except Exception as e:
+                logger.error(f"Failed to get replication factor for {topic.topic_name}: {str(e)}")
+            frappe.db.set_value("Kafka Topic", topic.name, {
+                "message_count": message_count,
+                "lag": lag,
+                "active_consumers": active_consumers,
+                "replication_factor": replication_factor,
+                "last_updated": frappe.utils.now()
+            })
+            frappe.db.commit()
+            logger.info(f"Updated stats for topic {topic.topic_name}: messages={message_count}, lag={lag}, consumers={active_consumers}, replication_factor={replication_factor}")
+        except Exception as e:
+            frappe.log_error(f"Failed to update stats for topic {topic.topic_name}: {str(e)}")
+        finally:
+            try:
+                if consumer:
+                    consumer.close()
+                if admin_client:
+                    admin_client.close()
+            except:
+                pass
+
+@frappe.whitelist()
+def update_cluster_stats():
+    """Update cluster-wide statistics."""
+    clusters = frappe.get_all("Kafka Cluster", fields=["name", "bootstrap_servers", "security_protocol", "sasl_mechanism", "sasl_username", "sasl_password"])
+    for cluster in clusters:
+        conf = {
+            'bootstrap.servers': cluster.bootstrap_servers,
+            'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+            'sasl.mechanisms': cluster.sasl_mechanism or None,
+            'sasl.username': cluster.sasl_username or None,
+            'sasl.password': cluster.sasl_password or None,
+        }
+        try:
+            admin_client = AdminClient(conf)
+            topics = admin_client.list_topics(timeout=10)
+            total_messages = 0
+            total_lag = 0
+            total_consumers = 0
+            for topic_name in topics.topics:
+                if topic_name.startswith('__'):
+                    continue
+                if not frappe.db.exists("Kafka Topic", {"topic_name": topic_name}):
+                    continue
+                topic_doc = frappe.get_doc("Kafka Topic", {"topic_name": topic_name})
+                total_messages += topic_doc.message_count or 0
+                total_lag += topic_doc.lag or 0
+                total_consumers += topic_doc.active_consumers or 0
+            broker_status = "Connected"
+            frappe.db.set_value("Kafka Cluster Stats", {"cluster": cluster.name}, {
+                "cluster": cluster.name,
+                "total_topics": len([t for t in topics.topics if not t.startswith('__')]),
+                "total_messages": total_messages,
+                "total_lag": total_lag,
+                "total_consumers": total_consumers,
+                "broker_status": broker_status,
+                "last_updated": frappe.utils.now()
+            }, update_modified=False)
+            if not frappe.db.exists("Kafka Cluster Stats", {"cluster": cluster.name}):
+                frappe.get_doc({
+                    "doctype": "Kafka Cluster Stats",
+                    "cluster": cluster.name,
+                    "total_topics": len([t for t in topics.topics if not t.startswith('__')]),
+                    "total_messages": total_messages,
+                    "total_lag": total_lag,
+                    "total_consumers": total_consumers,
+                    "broker_status": broker_status,
+                    "last_updated": frappe.utils.now()
+                }).db_insert()
+            frappe.db.commit()
+            logger.info(f"Updated stats for cluster {cluster.name}: topics={len([t for t in topics.topics if not t.startswith('__')])}, messages={total_messages}, lag={total_lag}, consumers={total_consumers}")
+        except Exception as e:
+            frappe.log_error(f"Failed to update stats for cluster {cluster.name}: {str(e)}")
+            frappe.db.set_value("Kafka Cluster Stats", {"cluster": cluster.name}, {
+                "broker_status": "Failed",
+                "last_updated": frappe.utils.now()
+            }, update_modified=False)
+            if not frappe.db.exists("Kafka Cluster Stats", {"cluster": cluster.name}):
+                frappe.get_doc({
+                    "doctype": "Kafka Cluster Stats",
+                    "cluster": cluster.name,
+                    "broker_status": "Failed",
+                    "last_updated": frappe.utils.now()
+                }).db_insert()
+            frappe.db.commit()
+        finally:
+            try:
+                admin_client.close() if 'admin_client' in locals() else None
+            except:
+                pass
+
 # REST API for External Applications
 @frappe.whitelist()
 def create_consumer(topic, consumer_group, api_endpoint, api_username=None, api_password=None, api_key=None, output_topic=None, failure_topic=None):
@@ -318,3 +473,43 @@ def publish_message(producer_id, message):
     except Exception as e:
         frappe.log_error(f"Failed to publish message: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+@frappe.whitelist()
+def get_topic_stats(topic_name):
+    """Return statistics for a specific topic."""
+    if not frappe.session.user or frappe.session.user == "Guest":
+        frappe.throw("Authentication required")
+    
+    username = frappe.session.user.replace("@", "_").replace(".", "_")
+    full_topic_name = topic_name if username == "Administrator"  else f"{username}_{topic_name}"
+    topic = frappe.get_doc("Kafka Topic", {"topic_name": full_topic_name})
+    return {
+        "topic_name": topic.topic_name,
+        "message_count": topic.message_count or 0,
+        "lag": topic.lag or 0,
+        "active_consumers": topic.active_consumers or 0,
+        "partition_count": topic.num_partitions,
+        "replication_factor": topic.replication_factor,
+        "last_updated": topic.last_updated
+    }
+
+@frappe.whitelist()
+def get_cluster_stats(cluster_name):
+    """Return statistics for a specific cluster."""
+    if not frappe.session.user or frappe.session.user == "Guest":
+        frappe.throw("Authentication required")
+    
+    cluster_stats = frappe.get_doc("Kafka Cluster Stats", {"cluster": cluster_name})
+    topics = frappe.get_all("Kafka Topic", filters={"cluster": cluster_name}, fields=[
+        "topic_name", "message_count", "lag", "active_consumers", "num_partitions", "replication_factor", "last_updated"
+    ])
+    return {
+        "cluster_name": cluster_name,
+        "total_topics": cluster_stats.total_topics or 0,
+        "total_messages": cluster_stats.total_messages or 0,
+        "total_lag": cluster_stats.total_lag or 0,
+        "total_consumers": cluster_stats.total_consumers or 0,
+        "broker_status": cluster_stats.broker_status,
+        "last_updated": cluster_stats.last_updated,
+        "topics": topics
+    }

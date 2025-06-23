@@ -8,9 +8,13 @@
  "field_order": [
   "cluster",
   "topic_name",
-  "column_break_vdtc",
   "num_partitions",
-  "replication_factor"
+  "replication_factor",
+  "column_break_vdtc",
+  "message_count",
+  "lag",
+  "active_consumers",
+  "last_updated"
  ],
  "fields": [
   {
@@ -50,11 +54,35 @@
    "label": "Replication Factor",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "message_count",
+   "fieldtype": "Int",
+   "label": "Message Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lag",
+   "fieldtype": "Int",
+   "label": "Total Lag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "active_consumers",
+   "fieldtype": "Int",
+   "label": "Active Consumers",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_updated",
+   "fieldtype": "Datetime",
+   "label": "Last Updated",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-10 22:47:56.731334",
+ "modified": "2025-06-23 15:29:25.931477",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Topic",
@@ -74,6 +102,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []
