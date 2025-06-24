@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\":\"dapSnmK_Gs\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Kafka Mediator</span>\",\"col\":12}},{\"id\":\"Wb3kL_E6GI\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Clusters\",\"col\":3}},{\"id\":\"otnQ_BCCLg\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Topics\",\"col\":3}},{\"id\":\"2etyaiqvSr\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Active Consumers\",\"col\":3}},{\"id\":\"bW3rxDSN0F\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Average Lag\",\"col\":3}},{\"id\":\"AZFfz5nuvA\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ErcVNULBA1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Clusters\",\"col\":3}},{\"id\":\"pW-i0Vl90I\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Topics\",\"col\":3}},{\"id\":\"XK0uLQwb1o\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Active Consumers\",\"col\":3}},{\"id\":\"JqF3OlnPOa\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Producers\",\"col\":3}},{\"id\":\"zSrR2tc7ib\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"sg7RNeoEx_\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Settings</b></span>\",\"col\":12}},{\"id\":\"Z-lvD6I5VM\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Kafka Settings\",\"col\":3}}]",
+ "content": "[{\"id\":\"dapSnmK_Gs\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Kafka Mediator</span>\",\"col\":12}},{\"id\":\"Wb3kL_E6GI\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Clusters\",\"col\":3}},{\"id\":\"otnQ_BCCLg\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Topics\",\"col\":3}},{\"id\":\"2etyaiqvSr\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Active Consumers\",\"col\":3}},{\"id\":\"bW3rxDSN0F\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Average Lag\",\"col\":3}},{\"id\":\"AZFfz5nuvA\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ErcVNULBA1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Clusters\",\"col\":3}},{\"id\":\"pW-i0Vl90I\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Topics\",\"col\":3}},{\"id\":\"XK0uLQwb1o\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Active Consumers\",\"col\":3}},{\"id\":\"JqF3OlnPOa\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Producers\",\"col\":3}},{\"id\":\"zSrR2tc7ib\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"sg7RNeoEx_\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Settings</b></span>\",\"col\":12}},{\"id\":\"Z-lvD6I5VM\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Kafka Settings\",\"col\":3}},{\"id\":\"r4zg_Hym3r\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Kafka Cluster Stats\",\"col\":3}}]",
  "creation": "2025-06-20 20:24:09.246870",
  "custom_blocks": [],
  "docstatus": 0,
@@ -13,7 +13,7 @@
  "is_hidden": 0,
  "label": "Kafka Mediator",
  "links": [],
- "modified": "2025-06-20 20:38:35.575998",
+ "modified": "2025-06-24 10:24:17.470640",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Mediator",
@@ -48,6 +48,15 @@
    "format": "{} Clusters",
    "label": "Clusters",
    "link_to": "Kafka Cluster",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Pink",
+   "doc_view": "List",
+   "format": "{} Stats",
+   "label": "Kafka Cluster Stats",
+   "link_to": "Kafka Cluster Stats",
    "stats_filter": "[]",
    "type": "DocType"
   },

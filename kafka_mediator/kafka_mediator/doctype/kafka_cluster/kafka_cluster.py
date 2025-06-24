@@ -5,6 +5,7 @@ import frappe
 from frappe.model.document import Document
 import confluent_kafka
 from confluent_kafka.admin import AdminClient
+from confluent_kafka import TopicCollection
 import logging
 
 # Set up logging
@@ -55,7 +56,11 @@ class KafkaCluster(Document):
 				return
 
 			# Fetch replication factors using describe_topics
-			describe_futures = admin_client.describe_topics(topics=[t for t in topic_keys if not t.startswith('__')], request_timeout=10)
+			non_internal_topics = [t for t in topic_keys if not t.startswith('__')]
+			if not non_internal_topics:
+				logger.info(f"No non-internal topics found for cluster {self.name}")
+				return
+			describe_futures = admin_client.describe_topics(TopicCollection(non_internal_topics), request_timeout=10)
 			replication_factors = {}
 			for topic_name, future in describe_futures.items():
 				try:
