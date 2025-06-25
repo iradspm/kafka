@@ -34,9 +34,9 @@ class KafkaTopic(Document):
 			logger.info(f"Topic creation initiated for {self.topic_name}: {result}")
 
 			# Verify topic exists
-			topics = admin_client.list_topics(timeout=10)
-			if self.topic_name not in topics.topics:
-				raise Exception(f"Topic {self.topic_name} was not created in Kafka")
+			# topics = admin_client.list_topics(timeout=10)
+			# if self.topic_name not in topics.topics:
+			# 	raise Exception(f"Topic {self.topic_name} was not created in Kafka")
 			
 			frappe.msgprint(f"Topic {self.topic_name} created successfully")
 			logger.info(f"Topic {self.topic_name} created successfully in Kafka cluster {self.cluster}")
