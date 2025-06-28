@@ -7,6 +7,7 @@ from confluent_kafka.admin import AdminClient
 import time
 import logging
 import uuid
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -475,7 +476,9 @@ def publish_message(topic_name, message):
         })
         if producers and producers[0]:
             producer = frappe.get_doc("Kafka Producer", producers[0].get('name'))
-            producer.publish_message(message)
+            if not isinstance(message, str):
+                message = json.dumps(message)
+            producer.publish_message(json.dumps(message))
             return {"status": "success"}
         else:
             frappe.throw("No associated producer found for the topic")
