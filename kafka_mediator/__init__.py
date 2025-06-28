@@ -462,14 +462,23 @@ def create_topic(topic_name, num_partitions=None, replication_factor=None):
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist()
-def publish_message(producer_id, message):
+def publish_message(topic_name, message):
     if not frappe.session.user or frappe.session.user == "Guest":
         frappe.throw("Authentication required")
     
+    username = frappe.session.user.replace("@", "_").replace(".", "_")
+    full_topic_name = f"{username}_{topic_name}"
+
     try:
-        producer = frappe.get_doc("Kafka Producer", producer_id)
-        producer.publish_message(message)
-        return {"status": "success"}
+        producers = frappe.get_all("Kafka Producer", filters={
+            "topic": full_topic_name
+        })
+        if producers and producers[0]:
+            producer = frappe.get_doc("Kafka Producer", producers[0].get('name'))
+            producer.publish_message(message)
+            return {"status": "success"}
+        else:
+            frappe.throw("No associated producer found for the topic")
     except Exception as e:
         frappe.log_error(f"Failed to publish message: {str(e)}")
         return {"status": "error", "message": str(e)}

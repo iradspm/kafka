@@ -154,7 +154,7 @@ Publishes a message to a Kafka topic using a configured producer.
 **Parameters** (JSON body):
 | Parameter      | Type   | Required | Description                                    |
 |----------------|--------|----------|------------------------------------------------|
-| `producer_id`  | String | Yes      | Name of the Kafka Producer doctype (e.g., "prod-001"). |
+| `topic_name`   | String | Yes      | Name of the Kafka Topic created in previous API call. |
 | `message`      | String | Yes      | Message to publish to the topic.               |
 
 **Example Request**:
@@ -162,7 +162,7 @@ Publishes a message to a Kafka topic using a configured producer.
 curl -X POST http://your-frappe-site/api/method/kafka_mediator.publish_message \
 -H "Content-Type: application/json" \
 -d '{
-    "producer_id": "prod-001",
+    "topic_name": "test_topic",
     "message": "Hello, Kafka!"
 }'
 ```
@@ -178,7 +178,7 @@ curl -X POST http://your-frappe-site/api/method/kafka_mediator.publish_message \
 ```json
 {
     "status": "error",
-    "message": "Failed to publish message: Producer prod-001 not found"
+    "message": "Failed to publish message: xxxx"
 }
 ```
 
