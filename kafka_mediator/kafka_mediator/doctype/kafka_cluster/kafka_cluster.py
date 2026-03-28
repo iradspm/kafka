@@ -18,10 +18,21 @@ class KafkaCluster(Document):
 			conf = {
 				'bootstrap.servers': self.bootstrap_servers,
 				'security.protocol': self.security_protocol or 'PLAINTEXT',
-				'sasl.mechanisms': self.sasl_mechanism or None,
-				'sasl.username': self.sasl_username or None,
-				'sasl.password': self.sasl_password or None
 			}
+			if self.sasl_mechanism:
+				conf['sasl.mechanisms'] = self.sasl_mechanism
+			if self.sasl_username:
+				conf['sasl.username'] = self.sasl_username
+			if self.sasl_password:
+				conf['sasl.password'] = self.sasl_password
+
+			# conf = {
+			# 	'bootstrap.servers': self.bootstrap_servers,
+			# 	'security.protocol': self.security_protocol or 'PLAINTEXT',
+			# 	'sasl.mechanisms': self.sasl_mechanism or None,
+			# 	'sasl.username': self.sasl_username or None,
+			# 	'sasl.password': self.sasl_password or None
+			# }
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			self.status = "Connected"
@@ -47,6 +58,14 @@ class KafkaCluster(Document):
 				'sasl.username': self.sasl_username or None,
 				'sasl.password': self.sasl_password or None
 			}
+
+			# conf = {
+			# 	'bootstrap.servers': self.bootstrap_servers,
+			# 	'security.protocol': self.security_protocol or 'PLAINTEXT',
+			# 	'sasl.mechanisms': self.sasl_mechanism or None,
+			# 	'sasl.username': self.sasl_username or None,
+			# 	'sasl.password': self.sasl_password or None
+			# }
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			topic_keys = list(topics.topics.keys())

@@ -44,12 +44,15 @@ class KafkaProducer(Document):
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
 			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-			'sasl.mechanisms': cluster.sasl_mechanism or None,
-			'sasl.username': cluster.sasl_username or None,
-			'sasl.password': cluster.sasl_password or None,
 			'acks': 'all',
 			'retries': 3
 		}
+		if cluster.sasl_mechanism:
+			conf['sasl.mechanisms'] = cluster.sasl_mechanism
+		if cluster.sasl_username:
+			conf['sasl.username'] = cluster.sasl_username
+		if cluster.sasl_password:
+			conf['sasl.password'] = cluster.sasl_password
 		producer = None
 		try:
 			producer = Producer(conf)

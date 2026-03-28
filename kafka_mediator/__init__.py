@@ -8,6 +8,7 @@ import time
 import logging
 import uuid
 import json
+from functools import wraps
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -525,3 +526,41 @@ def get_cluster_stats(cluster_name):
         "last_updated": cluster_stats.last_updated,
         "topics": topics
     }
+
+
+@frappe.whitelist()
+def format_response(success=False, message = None, status_code=200, data=None, pagination=None):
+    frappe.local.response.http_status_code = status_code
+    response_data = {
+        "status": "success" if status_code == 200 or status_code == 201 or status_code == 202 else "error",
+        "message": message,
+        "status_code": status_code,
+        "data": data,
+    }
+    if success and data is not None:
+        response_data["data"] = data
+    if not success and message is not None:
+        response_data["message"] = message
+
+    if success and message is not None:
+        response_data["message"] = message
+    if pagination:
+        response_data["pagination"] = pagination
+    else:
+        response_data["pagination"] = {}
+
+    frappe.local.response.update(response_data)
+
+def validate_payload(*required_fields):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(**kwargs):
+            missing = [f for f in required_fields if not kwargs.get(f)]
+            if missing:
+                return format_response(
+                    status_code=400,
+                    message="Missing required fields."
+                )
+            return fn(**kwargs)
+        return wrapper
+    return decorator

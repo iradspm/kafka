@@ -23,11 +23,13 @@ class KafkaConsumer(Document):
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
 			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-			'sasl.mechanisms': cluster.sasl_mechanism or None,
-			'sasl.username': cluster.sasl_username or None,
-			'sasl.password': cluster.sasl_password or None
-
 		}
+		if cluster.sasl_mechanism:
+			conf['sasl.mechanisms'] = cluster.sasl_mechanism
+		if cluster.sasl_username:
+			conf['sasl.username'] = cluster.sasl_username
+		if cluster.sasl_password:
+			conf['sasl.password'] = cluster.sasl_password
 		try:
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
@@ -69,13 +71,16 @@ class KafkaConsumer(Document):
 			conf = {
 				'bootstrap.servers': cluster.bootstrap_servers,
 				'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-				'sasl.mechanisms': cluster.sasl_mechanism or None,
-				'sasl.username': cluster.sasl_username or None,
-				'sasl.password': cluster.sasl_password or None,
 				'group.id': self.consumer_group or str(uuid.uuid4()),
 				'auto.offset.reset': 'earliest',
 				'enable.auto.commit': False
 			}
+			if cluster.sasl_mechanism:
+				conf['sasl.mechanisms'] = cluster.sasl_mechanism
+			if cluster.sasl_username:
+				conf['sasl.username'] = cluster.sasl_username
+			if cluster.sasl_password:
+				conf['sasl.password'] = cluster.sasl_password
 			consumer = None
 			try:
 				consumer = Consumer(conf)
@@ -95,12 +100,15 @@ class KafkaConsumer(Document):
 							producer_conf = {
 								'bootstrap.servers': cluster.bootstrap_servers,
 								'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-								'sasl.mechanisms': cluster.sasl_mechanism or None,
-								'sasl.username': cluster.sasl_username or None,
-								'sasl.password': cluster.sasl_password or None,
 								'acks': 'all',
 								'retries': 3
 							}
+							if cluster.sasl_mechanism:
+								producer_conf['sasl.mechanisms'] = cluster.sasl_mechanism
+							if cluster.sasl_username:
+								producer_conf['sasl.username'] = cluster.sasl_username
+							if cluster.sasl_password:
+								producer_conf['sasl.password'] = cluster.sasl_password
 							producer = Producer(producer_conf)
 							try:
 								producer.produce(self.output_topic, value=response.encode('utf-8'))
@@ -112,12 +120,15 @@ class KafkaConsumer(Document):
 							producer_conf = {
 								'bootstrap.servers': cluster.bootstrap_servers,
 								'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-								'sasl.mechanisms': cluster.sasl_mechanism or None,
-								'sasl.username': cluster.sasl_username or None,
-								'sasl.password': cluster.sasl_password or None,
 								'acks': 'all',
 								'retries': 3
 							}
+							if cluster.sasl_mechanism:
+								producer_conf['sasl.mechanisms'] = cluster.sasl_mechanism
+							if cluster.sasl_username:
+								producer_conf['sasl.username'] = cluster.sasl_username
+							if cluster.sasl_password:
+								producer_conf['sasl.password'] = cluster.sasl_password
 							producer = Producer(producer_conf)
 							try:
 								error_message = json.dumps({"message": message, "error": "API call failed"})
