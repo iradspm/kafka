@@ -12,15 +12,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class KafkaTopic(Document):
-	def after_insert(self):
+	def before_insert(self):
 		cluster = frappe.get_doc("Kafka Cluster", self.cluster)
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
 			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-			'sasl.mechanisms': cluster.sasl_mechanism or None,
-			'sasl.username': cluster.sasl_username or None,
-			'sasl.password': cluster.sasl_password or None
 		}
+		if cluster.sasl_mechanism:
+			conf['sasl.mechanisms'] = cluster.sasl_mechanism
+		if cluster.sasl_username:
+			conf['sasl.username'] = cluster.sasl_username
+		if cluster.sasl_password:
+			conf['sasl.password'] = cluster.sasl_password
 		try:
 			admin_client = AdminClient(conf)
 			new_topic = NewTopic(
@@ -38,11 +41,10 @@ class KafkaTopic(Document):
 			# if self.topic_name not in topics.topics:
 			# 	raise Exception(f"Topic {self.topic_name} was not created in Kafka")
 			
-			frappe.msgprint(f"Topic {self.topic_name} created successfully")
 			logger.info(f"Topic {self.topic_name} created successfully in Kafka cluster {self.cluster}")
 		except Exception as e:
 			frappe.log_error(f"Failed to create topic {self.topic_name}: {str(e)}")
-			frappe.throw(f"Failed to create topic in Kafka: {str(e)}", exc=Exception)
+			raise frappe.ValidationError(f"Failed to create topic in Kafka: {str(e)}")
 		finally:
 			# Ensure admin client resources are cleaned up
 			try:
@@ -55,10 +57,13 @@ class KafkaTopic(Document):
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
 			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-			'sasl.mechanisms': cluster.sasl_mechanism or None,
-			'sasl.username': cluster.sasl_username or None,
-			'sasl.password': cluster.sasl_password or None
 		}
+		if cluster.sasl_mechanism:
+			conf['sasl.mechanisms'] = cluster.sasl_mechanism
+		if cluster.sasl_username:
+			conf['sasl.username'] = cluster.sasl_username
+		if cluster.sasl_password:
+			conf['sasl.password'] = cluster.sasl_password
 		try:
 			admin_client = AdminClient(conf)
 			new_topic = NewTopic(

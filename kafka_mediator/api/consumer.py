@@ -1,0 +1,182 @@
+import frappe
+
+from kafka_mediator import (
+    get_default_settings,
+    validate_payload,
+    format_response
+)
+
+
+@frappe.whitelist()
+@validate_payload("topic_name", "consumer_group", "api_endpoint")
+def create_consumer(**kwargs):
+
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name      = payload.get("topic_name").strip().lower()
+    consumer_group  = payload.get("consumer_group").strip()
+    api_endpoint    = payload.get("api_endpoint").strip()
+    api_key         = payload.get("api_key")
+    api_username    = payload.get("api_username")
+    api_password    = payload.get("api_password")
+    output_topic    = payload.get("output_topic", "").strip().lower() or None
+    failure_topic   = payload.get("failure_topic", "").strip().lower() or None
+
+    settings = get_default_settings()
+
+    if not frappe.db.exists("Kafka Topic", {"topic_name": topic_name}):
+        return format_response(
+            status_code=404,
+            message=f"Topic '{topic_name}' does not exist. Create it first."
+        )
+
+    if output_topic and not frappe.db.exists("Kafka Topic", {"topic_name": output_topic}):
+        return format_response(
+            status_code=404,
+            message=f"Output topic '{output_topic}' does not exist."
+        )
+
+    if failure_topic and not frappe.db.exists("Kafka Topic", {"topic_name": failure_topic}):
+        return format_response(
+            status_code=404,
+            message=f"Failure topic '{failure_topic}' does not exist."
+        )
+
+    if frappe.db.exists("Kafka Consumer", {"topic": topic_name, "consumer_group": consumer_group, "enabled": 1}):
+        return format_response(
+            status_code=400,
+            message=f"An active consumer for topic '{topic_name}' in group '{consumer_group}' already exists."
+        )
+
+    try:
+        consumer = frappe.get_doc({
+            "doctype": "Kafka Consumer",
+            "cluster": settings.default_cluster,
+            "topic": topic_name,
+            "consumer_group": consumer_group,
+            "api_endpoint": api_endpoint,
+            "api_key": api_key,
+            "api_username": api_username,
+            "api_password": api_password,
+            "output_topic": output_topic,
+            "failure_topic": failure_topic,
+            "max_lag_threshold": settings.max_lag_threshold,
+            "min_lag_threshold": settings.min_lag_threshold,
+            "max_consumers": settings.max_consumers,
+            "scale_up_cooldown": settings.scale_up_cooldown,
+            "scale_down_cooldown": settings.scale_down_cooldown,
+            "enabled": 1
+        })
+        consumer.insert()
+
+        return format_response(
+            status_code=200,
+            message="Consumer created and started successfully",
+            data=dict(
+                consumer_id=consumer.name,
+                topic_name=topic_name,
+                consumer_group=consumer_group,
+                output_topic=output_topic,
+                failure_topic=failure_topic
+            )
+        )
+
+    except Exception as e:
+        return format_response(
+            status_code=500,
+            message=f"Failed to create consumer for topic '{topic_name}': {str(e)}"
+        )
+
+
+@frappe.whitelist()
+@validate_payload("consumer_id")
+def disable_consumer(**kwargs):
+
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    consumer_id = payload.get("consumer_id").strip()
+
+    if not frappe.db.exists("Kafka Consumer", consumer_id):
+        return format_response(
+            status_code=404,
+            message=f"Consumer '{consumer_id}' not found."
+        )
+
+    try:
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0)
+        return format_response(
+            status_code=200,
+            message=f"Consumer '{consumer_id}' disabled."
+        )
+    except Exception as e:
+        return format_response(
+            status_code=500,
+            message=f"Failed to disable consumer '{consumer_id}': {str(e)}"
+        )
+
+
+@frappe.whitelist()
+@validate_payload("consumer_id")
+def enable_consumer(**kwargs):
+
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    consumer_id = payload.get("consumer_id").strip()
+
+    if not frappe.db.exists("Kafka Consumer", consumer_id):
+        return format_response(
+            status_code=404,
+            message=f"Consumer '{consumer_id}' not found."
+        )
+
+    try:
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 1)
+        frappe.get_doc("Kafka Consumer", consumer_id).restart_consumer_thread()
+        return format_response(
+            status_code=200,
+            message=f"Consumer '{consumer_id}' enabled and thread restarted."
+        )
+    except Exception as e:
+        return format_response(
+            status_code=500,
+            message=f"Failed to enable consumer '{consumer_id}': {str(e)}"
+        )
+
+
+@frappe.whitelist()
+def list_consumers(**kwargs):
+
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name     = payload.get("topic_name", "").strip().lower() or None
+    consumer_group = payload.get("consumer_group", "").strip() or None
+    enabled        = payload.get("enabled")
+
+    filters = {}
+    if topic_name:
+        filters["topic"] = topic_name
+    if consumer_group:
+        filters["consumer_group"] = consumer_group
+    if enabled is not None:
+        filters["enabled"] = int(enabled)
+
+    try:
+        consumers = frappe.get_all(
+            "Kafka Consumer",
+            filters=filters,
+            fields=["name", "topic", "consumer_group", "api_endpoint", "output_topic", "failure_topic", "enabled", "current_lag"]
+        )
+        return format_response(
+            status_code=200,
+            message=f"{len(consumers)} consumer(s) found.",
+            data=consumers
+        )
+    except Exception as e:
+        return format_response(
+            status_code=500,
+            message=f"Failed to list consumers: {str(e)}"
+        )
