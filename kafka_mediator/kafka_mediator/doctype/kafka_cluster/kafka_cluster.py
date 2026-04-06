@@ -34,6 +34,7 @@ class KafkaCluster(Document):
 			# 	'sasl.username': self.sasl_username or None,
 			# 	'sasl.password': self.sasl_password or None
 			# }
+			logger.info(f"Configuration: {conf}")
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			self.status = "Connected"
