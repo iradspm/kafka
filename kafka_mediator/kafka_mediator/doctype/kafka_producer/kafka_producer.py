@@ -16,28 +16,6 @@ class KafkaProducer(Document):
 	def validate(self):
 		#No need to validate topic right now as Kafka takes sometime to propage the topic and may not be available.
 		return
-		# cluster = frappe.get_doc("Kafka Cluster", self.cluster)
-		# conf = {
-		# 	'bootstrap.servers': cluster.bootstrap_servers,
-		# 	'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-		# 	'sasl.mechanisms': cluster.sasl_mechanism or None,
-		# 	'sasl.username': cluster.sasl_username or None,
-		# 	'sasl.password': cluster.sasl_password or None
-		# }
-		# try:
-		# 	admin_client = AdminClient(conf)
-		# 	topics = admin_client.list_topics(timeout=10)
-		# 	# if self.topic not in topics.topics:
-		# 	# 	frappe.throw(f"Topic {self.topic} does not exist in Kafka cluster {self.cluster}")
-		# 	logger.info(f"Validated topic {self.topic} for producer {self.name}")
-		# except Exception as e:
-		# 	frappe.log_error(f"Failed to validate topic for producer {self.name}: {str(e)}")
-		# 	frappe.throw(f"Failed to validate topic: {str(e)}")
-		# finally:
-		# 	try:
-		# 		admin_client.close() if 'admin_client' in locals() else None
-		# 	except:
-		# 		pass
 
 	def publish_message(self, message):
 		cluster = frappe.get_doc("Kafka Cluster", self.cluster)
@@ -52,7 +30,7 @@ class KafkaProducer(Document):
 		if cluster.sasl_username:
 			conf['sasl.username'] = cluster.sasl_username
 		if cluster.sasl_password:
-			conf['sasl.password'] = cluster.sasl_password
+			conf['sasl.password'] = cluster.get_password("sasl_password")
 		producer = None
 		try:
 			producer = Producer(conf)

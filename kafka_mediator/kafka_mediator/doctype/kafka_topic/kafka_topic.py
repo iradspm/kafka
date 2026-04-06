@@ -23,7 +23,7 @@ class KafkaTopic(Document):
 		if cluster.sasl_username:
 			conf['sasl.username'] = cluster.sasl_username
 		if cluster.sasl_password:
-			conf['sasl.password'] = cluster.sasl_password
+			conf['sasl.password'] = cluster.get_password("sasl_password")
 		try:
 			admin_client = AdminClient(conf)
 			new_topic = NewTopic(
@@ -63,7 +63,7 @@ class KafkaTopic(Document):
 		if cluster.sasl_username:
 			conf['sasl.username'] = cluster.sasl_username
 		if cluster.sasl_password:
-			conf['sasl.password'] = cluster.sasl_password
+			conf['sasl.password'] = cluster.get_password("sasl_password")
 		try:
 			admin_client = AdminClient(conf)
 			new_topic = NewTopic(

@@ -29,7 +29,7 @@ class KafkaConsumer(Document):
 		if cluster.sasl_username:
 			conf['sasl.username'] = cluster.sasl_username
 		if cluster.sasl_password:
-			conf['sasl.password'] = cluster.sasl_password
+			conf['sasl.password'] = cluster.get_password("sasl_password")
 		try:
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
@@ -80,7 +80,7 @@ class KafkaConsumer(Document):
 			if cluster.sasl_username:
 				conf['sasl.username'] = cluster.sasl_username
 			if cluster.sasl_password:
-				conf['sasl.password'] = cluster.sasl_password
+				conf['sasl.password'] = cluster.get_password("sasl_password")
 			consumer = None
 			try:
 				consumer = Consumer(conf)
@@ -108,7 +108,7 @@ class KafkaConsumer(Document):
 							if cluster.sasl_username:
 								producer_conf['sasl.username'] = cluster.sasl_username
 							if cluster.sasl_password:
-								producer_conf['sasl.password'] = cluster.sasl_password
+								producer_conf['sasl.password'] = cluster.get_password("sasl_password")
 							producer = Producer(producer_conf)
 							try:
 								producer.produce(self.output_topic, value=response.encode('utf-8'))
@@ -128,7 +128,7 @@ class KafkaConsumer(Document):
 							if cluster.sasl_username:
 								producer_conf['sasl.username'] = cluster.sasl_username
 							if cluster.sasl_password:
-								producer_conf['sasl.password'] = cluster.sasl_password
+								producer_conf['sasl.password'] = cluster.get_password("sasl_password")
 							producer = Producer(producer_conf)
 							try:
 								error_message = json.dumps({"message": message, "error": "API call failed"})
