@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import frappe
+import traceback
 from frappe.model.document import Document
 import confluent_kafka
 from confluent_kafka.admin import AdminClient
@@ -40,8 +41,8 @@ class KafkaCluster(Document):
 			logger.info(f"Validated cluster {self.name} with {self.topic_count} topics")
 		except Exception as e:
 			self.status = "Failed"
-			#frappe.log_error(f"Failed to connect to Kafka cluster: {str(e)}")
-			frappe.throw(f"Failed to connect to Kafka cluster: {str(e)}")
+			frappe.log_error("Cluster connection error",f"Failed to connect to Kafka cluster: {traceback.format_exc()}")
+			frappe.throw(f"Failed to connect to Kafka cluster")
 		finally:
 			try:
 				admin_client.close() if 'admin_client' in locals() else None
@@ -113,13 +114,13 @@ class KafkaCluster(Document):
 						logger.info(f"Synced topic {topic_name} with {len(topics.topics[topic_name].partitions)} partitions, replication factor {replication_factors.get(topic_name, 1)}")
 						synced_count += 1
 					except Exception as e:
-						logger.error(f"Failed to sync topic {topic_name}: {str(e)}")
+						logger.error(f"Failed to sync topic {topic_name}", traceback.format_exc())
 						continue
 				else:
 					logger.info(f"Topic {topic_name} already exists, skipping")
 			logger.info(f"Completed sync: {synced_count} topics synced for cluster {self.name}")
 		except Exception as e:
-			frappe.log_error(f"Failed to sync topics for cluster {self.name}: {str(e)}")
+			frappe.log_error(f"Failed to sync topics for cluster {self.name}", {str(e)})
 		finally:
 			try:
 				admin_client.close() if 'admin_client' in locals() else None
