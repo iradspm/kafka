@@ -32,7 +32,7 @@ def monitor_kafka_metrics():
             'security.protocol': cluster.security_protocol or 'PLAINTEXT',
             'sasl.mechanisms': cluster.sasl_mechanism or None,
             'sasl.username': cluster.sasl_username or None,
-            'sasl.password': cluster.sasl_password or None,
+            'sasl.password': cluster.get_password("sasl_password") or None,
             'group.id': consumer.consumer_group
         }
         try:
@@ -213,7 +213,7 @@ def update_topic_stats():
             'security.protocol': cluster.security_protocol or 'PLAINTEXT',
             'sasl.mechanisms': cluster.sasl_mechanism or None,
             'sasl.username': cluster.sasl_username,
-            'sasl.password': cluster.sasl_password or None,
+            'sasl.password': cluster.get_password("sasl_password") or None,
             'group.id': f"stats_{topic.name}_{uuid.uuid4()}"
         }
         consumer = None
@@ -295,7 +295,7 @@ def update_cluster_stats():
             'security.protocol': cluster.security_protocol or 'PLAINTEXT',
             'sasl.mechanisms': cluster.sasl_mechanism or None,
             'sasl.username': cluster.sasl_username or None,
-            'sasl.password': cluster.sasl_password or None,
+            'sasl.password': cluster.get_password("sasl_password") or None,
         }
         try:
             admin_client = AdminClient(conf)
