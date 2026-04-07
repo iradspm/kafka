@@ -20,6 +20,8 @@ def create_consumer(**kwargs):
     api_key         = payload.get("api_key")
     api_username    = payload.get("api_username")
     api_password    = payload.get("api_password")
+    api_consumer_key = payload.get("consumer_key")
+    api_consumer_secret = payload.get("consumer_secret")
     output_topic    = payload.get("output_topic", "").strip().lower() or None
     failure_topic   = payload.get("failure_topic", "").strip().lower() or None
 
@@ -59,6 +61,8 @@ def create_consumer(**kwargs):
             "api_key": api_key,
             "api_username": api_username,
             "api_password": api_password,
+            "api_consumer_key":api_consumer_key,
+            "api_consumer_secret": api_consumer_secret,
             "output_topic": output_topic,
             "failure_topic": failure_topic,
             "max_lag_threshold": settings.max_lag_threshold,
@@ -133,11 +137,18 @@ def enable_consumer(**kwargs):
         )
 
     try:
+        thread_status = frappe.db.get_value("Kafka Consumer", consumer_id, "thread_status")
+        if thread_status == "running":
+            return format_response(
+                status_code=400,
+                message=f"Consumer '{consumer_id}' is already running. Disable it first if you want to restart."
+            )
+
         frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 1)
         frappe.get_doc("Kafka Consumer", consumer_id).restart_consumer_thread()
         return format_response(
             status_code=200,
-            message=f"Consumer '{consumer_id}' enabled and thread restarted."
+            message=f"Consumer '{consumer_id}' enabled and thread started."
         )
     except Exception as e:
         return format_response(
@@ -168,7 +179,11 @@ def list_consumers(**kwargs):
         consumers = frappe.get_all(
             "Kafka Consumer",
             filters=filters,
-            fields=["name", "topic", "consumer_group", "api_endpoint", "output_topic", "failure_topic", "enabled", "current_lag"]
+            fields=[
+                "name", "topic", "consumer_group", "api_endpoint",
+                "output_topic", "failure_topic", "enabled", "current_lag",
+                "thread_status", "last_heartbeat", "assigned_partitions"
+            ]
         )
         return format_response(
             status_code=200,

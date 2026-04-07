@@ -53,6 +53,16 @@ class KafkaTopic(Document):
 				pass
 
 	def increase_partitions(self, new_partitions):
+		new_partitions = int(new_partitions)
+		current = int(self.num_partitions or 1)
+
+		if new_partitions <= current:
+			logger.info(
+				f"Topic {self.topic_name} already has {current} partitions "
+				f"(requested {new_partitions}) — skipping."
+			)
+			return
+
 		cluster = frappe.get_doc("Kafka Cluster", self.cluster)
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
@@ -68,20 +78,19 @@ class KafkaTopic(Document):
 			admin_client = AdminClient(conf)
 			new_topic = NewTopic(
 				self.topic_name,
-				num_partitions=int(new_partitions),
+				num_partitions=new_partitions,
 				replication_factor=int(self.replication_factor)
 			)
 			future = admin_client.create_partitions([new_topic], request_timeout=30)
-			result = future[self.topic_name].result()
+			future[self.topic_name].result()
 			self.num_partitions = new_partitions
 			self.save()
-			frappe.msgprint(f"Updated partitions for topic {self.topic_name} to {new_partitions}")
-			logger.info(f"Updated partitions for {self.topic_name} to {new_partitions}")
+			logger.info(f"Topic {self.topic_name} partitions increased from {current} to {new_partitions}")
 		except Exception as e:
 			frappe.log_error(f"Failed to increase partitions for {self.topic_name}: {str(e)}")
 			frappe.throw(f"Failed to increase partitions: {str(e)}")
 		finally:
 			try:
 				admin_client.close() if 'admin_client' in locals() else None
-			except:
+			except Exception:
 				pass

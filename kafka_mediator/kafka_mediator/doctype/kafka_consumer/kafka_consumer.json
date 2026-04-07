@@ -12,6 +12,8 @@
   "api_endpoint",
   "api_username",
   "api_password",
+  "api_consumer_key",
+  "api_consumer_secret",
   "api_key",
   "enabled",
   "column_break_vvtf",
@@ -26,7 +28,11 @@
   "scale_up_cooldown",
   "scale_down_cooldown",
   "last_scale_up_time",
-  "last_scale_down_time"
+  "last_scale_down_time",
+  "thread_status",
+  "last_heartbeat",
+  "last_error",
+  "assigned_partitions"
  ],
  "fields": [
   {
@@ -48,7 +54,9 @@
   {
    "fieldname": "consumer_group",
    "fieldtype": "Data",
-   "label": "Consumer Group"
+   "label": "Consumer Group",
+   "reqd": 1,
+   "description": "All consumers on the same topic must share this value. Kafka assigns one partition per consumer in the group."
   },
   {
    "fieldname": "api_endpoint",
@@ -153,11 +161,47 @@
    "fieldtype": "Float",
    "label": "Last Scale Down Time",
    "read_only": 1
+  },
+  {
+   "fieldname": "api_consumer_key",
+   "fieldtype": "Password",
+   "label": "API Consumer Key"
+  },
+  {
+   "fieldname": "api_consumer_secret",
+   "fieldtype": "Password",
+   "label": "API Consumer Secret"
+  },
+  {
+   "fieldname": "thread_status",
+   "fieldtype": "Select",
+   "label": "Thread Status",
+   "options": "stopped\nrunning\nerror\nrestarting",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "last_heartbeat",
+   "fieldtype": "Datetime",
+   "label": "Last Heartbeat",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assigned_partitions",
+   "fieldtype": "Small Text",
+   "label": "Assigned Partitions",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-20 20:22:21.970551",
+ "modified": "2026-04-07 09:47:05.758194",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Consumer",
