@@ -20,6 +20,8 @@ def create_consumer(**kwargs):
     api_key         = payload.get("api_key")
     api_username    = payload.get("api_username")
     api_password    = payload.get("api_password")
+    api_consumer_key = payload.get("consumer_key")
+    api_consumer_secret = payload.get("consumer_secret")
     output_topic    = payload.get("output_topic", "").strip().lower() or None
     failure_topic   = payload.get("failure_topic", "").strip().lower() or None
 
@@ -59,6 +61,8 @@ def create_consumer(**kwargs):
             "api_key": api_key,
             "api_username": api_username,
             "api_password": api_password,
+            "api_consumer_key":api_consumer_key,
+            "api_consumer_secret": api_consumer_secret,
             "output_topic": output_topic,
             "failure_topic": failure_topic,
             "max_lag_threshold": settings.max_lag_threshold,

@@ -12,6 +12,8 @@
   "api_endpoint",
   "api_username",
   "api_password",
+  "api_consumer_key",
+  "api_consumer_secret",
   "api_key",
   "enabled",
   "column_break_vvtf",
@@ -153,11 +155,21 @@
    "fieldtype": "Float",
    "label": "Last Scale Down Time",
    "read_only": 1
+  },
+  {
+   "fieldname": "api_consumer_key",
+   "fieldtype": "Password",
+   "label": "API Consumer Key"
+  },
+  {
+   "fieldname": "api_consumer_secret",
+   "fieldtype": "Password",
+   "label": "API Consumer Secret"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-20 20:22:21.970551",
+ "modified": "2026-04-07 09:47:05.758194",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Consumer",

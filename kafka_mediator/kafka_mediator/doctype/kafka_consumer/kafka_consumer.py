@@ -11,7 +11,9 @@ import logging
 import uuid
 import base64
 import time
-import requests, json
+import jwt
+import requests
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -161,12 +163,19 @@ class KafkaConsumer(Document):
 		try:
 			headers = {'Content-Type': 'application/json'}
 			if self.api_username and self.api_password:
-				auth_str = f"{self.api_username}:{self.api_password}"
+				auth_str = f"{self.api_username}:{self.get_password("api_password")}"
 				headers['Authorization'] = f"Basic {base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')}"
+
+			elif self.api_consumer_key and self.api_consumer_secret:
+				cons_key = self.get_password("api_consumer_key")
+				cons_secret = self.get_password("api_consumer_secret")
+				token = self.generate_hie_auth_token(consumer_key=cons_key, consumer_secret=cons_secret)
+				headers['Authorization'] = f"Bearer {token}"
+
 			elif self.api_key:
 				headers['Authorization'] = f"Bearer {self.api_key}"
 
-			response = requests.post(self.api_endpoint, data=json.dumps({'message': message}), headers=headers, timeout=10)
+			response = requests.post(self.api_endpoint, data=json.dumps(message), headers=headers, timeout=10)
 			if response.status_code == 200:
 				logger.info(f"API call successful for consumer {self.name}")
 				return response.text
@@ -176,3 +185,25 @@ class KafkaConsumer(Document):
 		except Exception as e:
 			frappe.log_error(f"API call failed for consumer {self.name}: {str(e)}")
 			return None
+
+	def generate_hie_auth_token(self, consumer_key, consumer_secret):
+		try:
+			now = int(time.time())
+			payload = {
+				"key": consumer_key,
+				"iat": now,        
+				"exp": now + 3600
+				}
+			headers = {
+				"alg": "HS256",
+				"typ": "JWT"
+				}
+			token = jwt.encode(
+				payload,
+				consumer_secret,
+				algorithm="HS256",
+				headers=headers
+				)
+			return token
+		except Exception:
+			None
