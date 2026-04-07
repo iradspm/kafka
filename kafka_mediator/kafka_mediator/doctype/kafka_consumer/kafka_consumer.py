@@ -221,7 +221,13 @@ class KafkaConsumer(Document):
                             consumer.commit()
 
                         else:
-                            # No output, no failure topic configured — commit and continue
+                            # response=None, retries exhausted, no failure_topic — log and commit
+                            if not response:
+                                frappe.log_error(
+                                    f"Consumer {self.name}: message at offset {msg.offset()} "
+                                    f"dropped after {retries} retries (no failure_topic configured). "
+                                    f"Topic: {msg.topic()}, Partition: {msg.partition()}"
+                                )
                             retry_counts.pop(retry_key, None)
                             consumer.commit()
 
