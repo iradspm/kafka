@@ -143,8 +143,25 @@ class KafkaConsumer(Document):
                 'security.protocol': cluster.security_protocol or 'PLAINTEXT',
                 'group.id': self.consumer_group,
                 'auto.offset.reset': 'earliest',
-                'enable.auto.commit': False
+                'enable.auto.commit': False,
+
+                # Static membership — prevents unnecessary rebalances on restart.
+                # Each consumer document gets a stable identity in the group.
+                'group.instance.id': f"{self.consumer_group}-{self.name}",
+
+                # Give the broker more time before declaring this consumer dead.
+                # Default session.timeout.ms is 10 s — too short when the API
+                # call can take up to 10 s and DB heartbeat writes add overhead.
+                'session.timeout.ms': 45000,
+                'heartbeat.interval.ms': 10000,      # must be < session.timeout.ms / 3 (< 15000)
+
+                # Maximum time between two poll() calls before the broker kicks
+                # the consumer out of the group. Set generously: with MAX_RETRIES=3
+                # and a 10 s API timeout each retry, a single message can consume
+                # ~30 s before we give up. Add headroom for DB writes.
+                'max.poll.interval.ms': 300000,      # 5 minutes
             }
+
             if cluster.sasl_mechanism:
                 conf['sasl.mechanisms'] = cluster.sasl_mechanism
             if cluster.sasl_username:
@@ -153,7 +170,6 @@ class KafkaConsumer(Document):
                 conf['sasl.password'] = cluster.get_password("sasl_password")
 
             consumer = None
-            retry_counts = {}
             last_heartbeat_tick = time.monotonic()
 
             try:
@@ -163,101 +179,130 @@ class KafkaConsumer(Document):
                     on_assign=self._on_partition_assign,
                     on_revoke=self._on_partition_revoke
                 )
-                logger.info(f"Consumer {self.name} subscribed to topic {self.topic}")
+                logger.info(f"Consumer {self.name} subscribed to topic {self.topic} "
+                            f"(instance_id={self.consumer_group}-{self.name})")
 
-                # DB-driven loop: picks up enabled=0 set by scale_down_consumer
+                # DB-driven loop: picks up enabled=0 set by disable_consumer / scale_down
                 while frappe.db.get_value("Kafka Consumer", self.name, "enabled"):
                     try:
                         msg = consumer.poll(1.0)
 
-                        # Heartbeat: write to DB every HEARTBEAT_INTERVAL seconds
-                        if time.monotonic() - last_heartbeat_tick > HEARTBEAT_INTERVAL:
-                            frappe.db.set_value("Kafka Consumer", self.name, "last_heartbeat", frappe.utils.now())
+                        # Heartbeat: write to DB every HEARTBEAT_INTERVAL seconds.
+                        # This is separate from the Kafka heartbeat (handled internally
+                        # by librdkafka). This only tracks liveness in the Frappe DB.
+                        now = time.monotonic()
+                        if now - last_heartbeat_tick > HEARTBEAT_INTERVAL:
+                            frappe.db.set_value(
+                                "Kafka Consumer", self.name,
+                                "last_heartbeat", frappe.utils.now()
+                            )
                             frappe.db.commit()
-                            last_heartbeat_tick = time.monotonic()
+                            last_heartbeat_tick = now
 
                         if msg is None:
                             continue
+
                         if msg.error():
-                            frappe.log_error(f"Consumer {self.name} error: {msg.error()}")
+                            frappe.log_error(f"Consumer {self.name} Kafka error: {msg.error()}")
                             continue
 
                         message = msg.value().decode('utf-8')
-                        retry_key = f"{msg.topic()}-{msg.partition()}-{msg.offset()}"
-                        retries = retry_counts.get(retry_key, 0)
+                        response = None
 
-                        # frappe.log_error("Message", message)
+                        # Retry in-memory — poll() advances the offset within the session
+                        # so the same message will NOT be re-delivered on the next poll()
+                        # call. We must retry the API call here before moving on.
+                        for attempt in range(MAX_RETRIES + 1):
+                            response = self.call_api_endpoint(message)
+                            if response is not None:
+                                break
+                            if attempt < MAX_RETRIES:
+                                logger.warning(
+                                    f"Consumer {self.name}: retry {attempt + 1}/{MAX_RETRIES} "
+                                    f"for offset {msg.offset()} partition {msg.partition()}"
+                                )
+                                # Back off while keeping librdkafka heartbeats alive.
+                                backoff_end = time.monotonic() + 2 ** attempt  # 1s, 2s, 4s
+                                while time.monotonic() < backoff_end:
+                                    consumer.poll(0)
+                                    time.sleep(0.1)
 
-                        response = self.call_api_endpoint(message)
-
-                        if response and self.output_topic:
-                            self._produce(cluster, self.output_topic, response)
-                            retry_counts.pop(retry_key, None)
+                        if response is not None:
+                            # Success — optionally forward response to output topic
+                            if self.output_topic:
+                                self._produce(cluster, self.output_topic, response)
                             consumer.commit()
-
-                        elif not response and retries < MAX_RETRIES:
-                            # Transient failure — do NOT commit, will retry on next poll
-                            retry_counts[retry_key] = retries + 1
-                            logger.warning(
-                                f"Consumer {self.name}: retry {retries + 1}/{MAX_RETRIES} "
-                                f"for offset {msg.offset()}"
+                            logger.info(
+                                f"Consumer {self.name}: committed offset {msg.offset()} "
+                                f"partition {msg.partition()}"
                             )
 
-                        elif not response and self.failure_topic:
-                            # Exhausted retries — route to DLQ with full context
+                        elif self.failure_topic:
+                            # Retries exhausted — route to Dead Letter Queue
                             dlq_payload = json.dumps({
                                 "original_message": message,
                                 "topic": msg.topic(),
                                 "partition": msg.partition(),
                                 "offset": msg.offset(),
-                                "retries": retries,
+                                "retries": MAX_RETRIES,
+                                "consumer": self.name,
                                 "error": "API call failed after max retries"
                             })
                             self._produce(cluster, self.failure_topic, dlq_payload)
                             logger.error(
-                                f"Consumer {self.name}: message routed to DLQ after {retries} retries"
+                                f"Consumer {self.name}: message at offset {msg.offset()} "
+                                f"routed to DLQ '{self.failure_topic}' after {MAX_RETRIES} retries"
                             )
-                            retry_counts.pop(retry_key, None)
                             consumer.commit()
 
                         else:
-                            # response=None, retries exhausted, no failure_topic — log and commit
-                            if not response:
-                                frappe.log_error(
-                                    f"Consumer {self.name}: message at offset {msg.offset()} "
-                                    f"dropped after {retries} retries (no failure_topic configured). "
-                                    f"Topic: {msg.topic()}, Partition: {msg.partition()}"
-                                )
-                            retry_counts.pop(retry_key, None)
+                            # Retries exhausted, no DLQ — log and skip to avoid blocking
+                            # the partition forever on a poison pill message.
+                            frappe.log_error(
+                                f"Consumer {self.name}: message at offset {msg.offset()} "
+                                f"partition {msg.partition()} dropped after {MAX_RETRIES} retries "
+                                f"(no failure_topic configured). Topic: {msg.topic()}"
+                            )
                             consumer.commit()
 
                     except Exception as e:
-                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", str(e)[:500])
+                        # Per-message exception — log, back off, keep the loop alive.
+                        # Do NOT re-raise; a single bad message should not kill the thread.
+                        err_str = str(e)[:500]
+                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str)
                         frappe.db.commit()
-                        frappe.log_error(f"Consumer {self.name} processing failed: {str(e)}")
-                        time.sleep(5)
+                        frappe.log_error(f"Consumer {self.name} processing error: {err_str}")
+                        backoff_end = time.monotonic() + 5
+                        while time.monotonic() < backoff_end:
+                            consumer.poll(0)
+                            time.sleep(0.1)
 
-                # Drain any pending offsets before closing
+                # ── Clean shutdown ──────────────────────────────────────────────
+                # enabled flag was set to 0; drain pending commits before closing.
+                logger.info(f"Consumer {self.name}: enabled=0 detected, shutting down cleanly.")
                 try:
                     consumer.commit()
                 except Exception:
                     pass
 
             except Exception as e:
-                frappe.log_error(f"Failed to initialize consumer {self.name}: {str(e)}")
+                frappe.log_error(f"Consumer {self.name}: failed to initialise Kafka consumer: {str(e)}")
                 raise
+
             finally:
                 try:
                     if consumer:
                         consumer.close()
+                        logger.info(f"Consumer {self.name}: Kafka consumer closed.")
                 except Exception:
                     pass
 
             frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped")
             frappe.db.commit()
-            logger.info(f"Consumer {self.name} thread stopped cleanly")
+            logger.info(f"Consumer {self.name} thread stopped cleanly.")
 
         except Exception as e:
+            # Fatal thread error — update DB so operators can see the failure.
             try:
                 frappe.db.set_value("Kafka Consumer", self.name, {
                     "thread_status": "error",
@@ -267,6 +312,7 @@ class KafkaConsumer(Document):
             except Exception:
                 pass
             logger.error(f"Consumer {self.name} thread fatal error: {str(e)}")
+
         finally:
             try:
                 frappe.destroy()
