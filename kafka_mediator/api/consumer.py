@@ -195,3 +195,80 @@ def list_consumers(**kwargs):
             status_code=500,
             message=f"Failed to list consumers: {str(e)}"
         )
+
+@frappe.whitelist()
+@validate_payload("topic_name", "consumer_group")
+def scale_up_consumer(**kwargs):
+    """Add another consumer instance to an existing group."""
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name     = payload.get("topic_name").strip().lower()
+    consumer_group = payload.get("consumer_group").strip()
+
+    # Get config from an existing consumer in the group
+    existing = frappe.db.get_value(
+        "Kafka Consumer",
+        {"topic": topic_name, "consumer_group": consumer_group, "enabled": 1},
+        ["name", "cluster", "api_endpoint", "api_username", "output_topic", "failure_topic"],
+        as_dict=True
+    )
+
+    if not existing:
+        return format_response(
+            status_code=404,
+            message=(
+                f"No active consumer found for topic '{topic_name}' in group '{consumer_group}'. "
+                f"Use create_consumer to register the first instance for this group."
+            )
+        )
+
+    existing_count = frappe.db.count("Kafka Consumer", {
+        "topic": topic_name,
+        "consumer_group": consumer_group,
+        "enabled": 1
+    })
+
+    settings = get_default_settings()
+    if existing_count >= (settings.max_consumers or 6):
+        return format_response(
+            status_code=400,
+            message=f"Already at max consumers ({existing_count}) for this group."
+        )
+
+    source_name = existing.name
+    api_key             = frappe.db.get_value("Kafka Consumer", source_name, "api_key")
+    api_password        = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_password", raise_exception=False)
+    api_consumer_key    = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_consumer_key", raise_exception=False)
+    api_consumer_secret = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_consumer_secret", raise_exception=False)
+
+    try:
+        consumer = frappe.get_doc({
+            "doctype": "Kafka Consumer",
+            "cluster": existing.cluster,
+            "topic": topic_name,
+            "consumer_group": consumer_group,
+            "api_endpoint": existing.api_endpoint,
+            "api_key": api_key,
+            "api_username": existing.api_username,
+            "api_password": api_password,
+            "api_consumer_key": api_consumer_key,
+            "api_consumer_secret": api_consumer_secret,
+            "output_topic": existing.output_topic,
+            "failure_topic": existing.failure_topic,
+            "max_lag_threshold": settings.max_lag_threshold,
+            "min_lag_threshold": settings.min_lag_threshold,
+            "max_consumers": settings.max_consumers,
+            "scale_up_cooldown": settings.scale_up_cooldown,
+            "scale_down_cooldown": settings.scale_down_cooldown,
+            "enabled": 1
+        })
+        consumer.insert()
+
+        return format_response(
+            status_code=200,
+            message=f"Scaled up to {existing_count + 1} consumers for group '{consumer_group}'.",
+            data={"consumer_id": consumer.name, "total_instances": existing_count + 1}
+        )
+    except Exception as e:
+        return format_response(status_code=500, message=str(e))
