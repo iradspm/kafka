@@ -260,7 +260,7 @@ class KafkaConsumer(Document):
                         }
 
                         # Wait for all, keep Kafka heartbeat alive while waiting
-                        results = {}  # msg -> should_commit bool
+                        results = []  # list of (msg, should_commit bool)
                         pending = set(futures)
                         while pending:
                             consumer.poll(0)
@@ -270,13 +270,13 @@ class KafkaConsumer(Document):
                             for future in done:
                                 msg = futures[future]
                                 try:
-                                    results[msg] = future.result()
+                                    results.append((msg, future.result()))
                                 except Exception as e:
                                     frappe.log_error(
                                         f"Consumer {self.name}: unhandled error for "
                                         f"offset {msg.offset()}: {str(e)[:500]}"
                                     )
-                                    results[msg] = False
+                                    results.append((msg, False))
 
                             if pending:
                                 time.sleep(0.05)
@@ -285,9 +285,9 @@ class KafkaConsumer(Document):
                         # Messages that returned False have no failure_topic and must be redelivered.
                         offsets_to_commit = [
                             TopicPartition(msg.topic(), msg.partition(), msg.offset() + 1)
-                            for msg, ok in results.items() if ok
+                            for msg, ok in results if ok
                         ]
-                        skipped = len([m for m, ok in results.items() if not ok])
+                        skipped = len([m for m, ok in results if not ok])
 
                         if offsets_to_commit:
                             consumer.commit(offsets=offsets_to_commit)
