@@ -19,6 +19,7 @@
   "column_break_vvtf",
   "output_topic",
   "failure_topic",
+  "requeue_on_failure",
   "output_producer",
   "min_lag_threshold",
   "max_lag_threshold",
@@ -125,6 +126,13 @@
    "fieldtype": "Link",
    "label": "Failure Topic",
    "options": "Kafka Topic"
+  },
+  {
+   "fieldname": "requeue_on_failure",
+   "fieldtype": "Check",
+   "label": "Requeue on Failure",
+   "description": "If checked and a Failure Topic is set, failed messages are republished to the failure topic instead of being left uncommitted for redelivery.",
+   "depends_on": "failure_topic"
   },
   {
    "default": "100",
