@@ -23,7 +23,7 @@ class KafkaProducer(Document):
 			'bootstrap.servers': cluster.bootstrap_servers,
 			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
 			'acks': 'all',
-			'retries': 3
+			'enable.idempotence': True,
 		}
 		if cluster.sasl_mechanism:
 			conf['sasl.mechanisms'] = cluster.sasl_mechanism
@@ -31,19 +31,12 @@ class KafkaProducer(Document):
 			conf['sasl.username'] = cluster.sasl_username
 		if cluster.sasl_password:
 			conf['sasl.password'] = cluster.get_password("sasl_password")
-		producer = None
 		try:
 			producer = Producer(conf)
 			producer.produce(self.topic, value=message.encode('utf-8'))
-			producer.flush(timeout=10)
+			producer.flush(timeout=30)
 			frappe.msgprint(f"Message published to topic {self.topic}")
 			logger.info(f"Message published to {self.topic} by producer {self.name}")
 		except Exception as e:
 			frappe.log_error(f"Failed to publish message for producer {self.name}: {str(e)}")
 			frappe.throw(f"Failed to publish message: {str(e)}")
-		finally:
-			try:
-				if producer:
-					producer.flush()
-			except:
-				pass
