@@ -43,7 +43,6 @@ class KafkaConsumer(Document):
                     f"Consumers in group '{self.consumer_group}' have inconsistent "
                     f"'Requeue on Failure' settings. Fix the existing consumers first."
                 )
-            # Mismatch between this consumer and peers is allowed — on_update will sync peers.
 
         cluster = frappe.get_doc("Kafka Cluster", self.cluster)
         conf = {
@@ -55,7 +54,10 @@ class KafkaConsumer(Document):
         if cluster.sasl_username:
             conf['sasl.username'] = cluster.sasl_username
         if cluster.sasl_password:
-            conf['sasl.password'] = cluster.get_password("sasl_password")
+            sasl_password = cluster.get_password("sasl_password")
+            if not sasl_password:
+                frappe.throw(f"Password not found for Kafka Cluster {self.cluster} sasl_password. Re-save the cluster doc to store it.")
+            conf['sasl.password'] = sasl_password
         try:
             admin_client = AdminClient(conf)
             topics = admin_client.list_topics(timeout=10)
@@ -82,8 +84,6 @@ class KafkaConsumer(Document):
             frappe.log_error(f"Failed to start consumer thread {self.name}: {str(e)}")
             frappe.throw(f"Failed to start consumer thread: {str(e)}")
 
-    # Fields whose change requires the consumer thread to be restarted
-    # so the new values are picked up from the database.
     RESTART_ON_CHANGE = {
         "api_endpoint", "api_username", "api_password",
         "api_consumer_key", "api_consumer_secret", "api_key",
@@ -171,6 +171,7 @@ class KafkaConsumer(Document):
             frappe.log_error(f"Failed to restart consumer thread {self.name}: {str(e)}")
 
     def consume_messages(self, site):
+        self._site = site  # worker threads need this to init their own DB connection
         try:
             frappe.init(site=site)
             frappe.connect()
@@ -185,7 +186,10 @@ class KafkaConsumer(Document):
             if cluster.sasl_username:
                 base_conf['sasl.username'] = cluster.sasl_username
             if cluster.sasl_password:
-                base_conf['sasl.password'] = cluster.get_password("sasl_password")
+                sasl_password = cluster.get_password("sasl_password")
+                if not sasl_password:
+                    frappe.throw(f"Password not found for Kafka Cluster {self.cluster} sasl_password. Re-save the cluster doc to store it.")
+                base_conf['sasl.password'] = sasl_password
 
             producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
             self._producer = producer  # accessible from _process_message worker threads
@@ -274,7 +278,7 @@ class KafkaConsumer(Document):
                                 except Exception as e:
                                     frappe.log_error(
                                         f"Consumer {self.name}: unhandled error for "
-                                        f"offset {msg.offset()}: {str(e)[:500]}"
+                                        f"offset {msg.offset()}: {str(e)}"
                                     )
                                     results.append((msg, False))
 
@@ -302,7 +306,7 @@ class KafkaConsumer(Document):
                             )
 
                     except Exception as e:
-                        err_str = str(e)[:500]
+                        err_str = str(e)
                         frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str)
                         frappe.db.commit()
 
@@ -362,12 +366,20 @@ class KafkaConsumer(Document):
     def _process_message(self, msg):
         """Called in a thread-pool worker. Handles retry + produce/DLQ for one message.
         Returns True if the offset should be committed, False if it should be redelivered."""
+        frappe.init(site=self._site)
+        frappe.connect()
+        try:
+            return self._process_message_inner(msg)
+        finally:
+            frappe.destroy()
+
+    def _process_message_inner(self, msg):
         message = msg.value().decode('utf-8')
-        response = None
+        response = False
 
         for attempt in range(MAX_RETRIES + 1):
             response = self.call_api_endpoint(message)
-            if response is not None:
+            if response:
                 break
             if attempt < MAX_RETRIES:
                 logger.warning(
@@ -376,7 +388,7 @@ class KafkaConsumer(Document):
                 )
                 time.sleep(2 ** attempt)
 
-        if response is not None:
+        if response:
             if self.output_topic:
                 self._produce(self._producer, self.output_topic, response)
             logger.info(
@@ -466,25 +478,18 @@ class KafkaConsumer(Document):
                 headers=headers,
                 timeout=10
             )
-            if response.status_code == 200:
+            frappe.log_error("API Endpoint", f"{self.api_endpoint} - {response}")
+            response_status = response.status_code
+            if response_status in [200,201,202]:
                 logger.info(f"API call successful for consumer {self.name}")
-                return response.text
-
-            if response.status_code in (401, 403):
-                frappe.log_error(
-                    f"Consumer {self.name}: auth failure ({response.status_code}) "
-                    f"calling {self.api_endpoint}. Check credentials."
-                )
-                return None
-
-            frappe.log_error(f"API call failed for consumer {self.name}: {response.status_code}")
-            return None
+                return True
+            return False
         except requests.exceptions.Timeout:
-            frappe.log_error(f"Consumer {self.name}: API call timed out after 10 s")
-            return None
+            logger.info(f"API call failed for consumer {self.name} - Timeout")
+            return False
         except Exception as e:
-            frappe.log_error(f"API call failed for consumer {self.name}: {str(e)}")
-            return None
+            logger.info(f"API call failed for consumer {self.name} - {str(e)}")
+            return False
 
     def generate_hie_auth_token(self, consumer_key, consumer_secret):
         try:

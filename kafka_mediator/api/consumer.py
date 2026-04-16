@@ -109,7 +109,11 @@ def disable_consumer(**kwargs):
         )
 
     try:
-        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0)
+        frappe.db.set_value("Kafka Consumer", consumer_id, {
+            "enabled": 0,
+            "thread_status": "stopped"
+        })
+        frappe.db.commit()
         return format_response(
             status_code=200,
             message=f"Consumer '{consumer_id}' disabled."

@@ -44,15 +44,18 @@ class KafkaCluster(Document):
 				pass
 	
 	def after_insert(self):
-        # Sync existing Kafka topics
+		# Sync existing Kafka topics
 		try:
 			conf = {
 				'bootstrap.servers': self.bootstrap_servers,
 				'security.protocol': self.security_protocol or 'PLAINTEXT',
-				'sasl.mechanisms': self.sasl_mechanism or None,
-				'sasl.username': self.sasl_username or None,
-				'sasl.password': self.get_password("sasl_password") or None
 			}
+			if self.sasl_mechanism:
+				conf['sasl.mechanisms'] = self.sasl_mechanism
+			if self.sasl_username:
+				conf['sasl.username'] = self.sasl_username
+			if self.sasl_password:
+				conf['sasl.password'] = self.get_password("sasl_password")
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			topic_keys = list(topics.topics.keys())
