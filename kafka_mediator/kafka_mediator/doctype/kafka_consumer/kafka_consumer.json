@@ -28,6 +28,7 @@
   "low_lag_count",
   "scale_up_cooldown",
   "scale_down_cooldown",
+  "max_retries",
   "last_scale_up_time",
   "last_scale_down_time",
   "thread_status",
@@ -157,6 +158,12 @@
    "fieldname": "scale_down_cooldown",
    "fieldtype": "Int",
    "label": "Scale Down Cooldown (Seconds)"
+  },
+  {
+   "fieldname": "max_retries",
+   "fieldtype": "Int",
+   "label": "Max Retries",
+   "description": "Overrides global Max Retries from Kafka Settings. Leave blank to use the global default."
   },
   {
    "fieldname": "last_scale_up_time",
