@@ -27,7 +27,6 @@ class KafkaCluster(Document):
 			if self.sasl_password:
 				conf['sasl.password'] = self.get_password("sasl_password")
 
-			logger.info(f"Configuration: {conf}")
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			self.status = "Connected"

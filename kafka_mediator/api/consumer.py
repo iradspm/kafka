@@ -109,10 +109,7 @@ def disable_consumer(**kwargs):
         )
 
     try:
-        frappe.db.set_value("Kafka Consumer", consumer_id, {
-            "enabled": 0,
-            "thread_status": "stopped"
-        })
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0)
         frappe.db.commit()
         return format_response(
             status_code=200,
@@ -241,7 +238,11 @@ def scale_up_consumer(**kwargs):
         )
 
     source_name = existing.name
-    api_key             = frappe.db.get_value("Kafka Consumer", source_name, "api_key")
+    source_full = frappe.db.get_value(
+        "Kafka Consumer", source_name,
+        ["api_key", "api_username", "max_retries"],
+        as_dict=True
+    )
     api_password        = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_password", raise_exception=False)
     api_consumer_key    = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_consumer_key", raise_exception=False)
     api_consumer_secret = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_consumer_secret", raise_exception=False)
@@ -253,13 +254,14 @@ def scale_up_consumer(**kwargs):
             "topic": topic_name,
             "consumer_group": consumer_group,
             "api_endpoint": existing.api_endpoint,
-            "api_key": api_key,
-            "api_username": existing.api_username,
+            "api_key": source_full.api_key,
+            "api_username": source_full.api_username,
             "api_password": api_password,
             "api_consumer_key": api_consumer_key,
             "api_consumer_secret": api_consumer_secret,
             "output_topic": existing.output_topic,
             "failure_topic": existing.failure_topic,
+            "max_retries": source_full.max_retries,
             "max_lag_threshold": settings.max_lag_threshold,
             "min_lag_threshold": settings.min_lag_threshold,
             "max_consumers": settings.max_consumers,
