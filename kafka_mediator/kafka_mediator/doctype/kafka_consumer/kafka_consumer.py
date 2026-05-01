@@ -177,6 +177,7 @@ class KafkaConsumer(Document):
 
             producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
             self._producer = producer  # accessible from _process_message worker threads
+            self._max_retries = self.max_retries or frappe.db.get_single_value("Kafka Settings", "max_retries") or 1
 
             # Mark thread as running
             frappe.db.set_value("Kafka Consumer", self.name, {
@@ -359,7 +360,7 @@ class KafkaConsumer(Document):
 
     def _process_message_inner(self, msg):
         message = msg.value().decode('utf-8')
-        max_retries = self.max_retries or frappe.db.get_single_value("Kafka Settings", "max_retries") or 1
+        max_retries = self._max_retries
         response = False
 
         for attempt in range(max_retries + 1):
@@ -374,7 +375,7 @@ class KafkaConsumer(Document):
                 time.sleep(2 ** attempt)
 
         if response:
-            if self.output_topic:
+            if self.output_topic and isinstance(response, str):
                 self._produce(self._producer, self.output_topic, response)
             logger.info(
                 f"Consumer {self.name}: processed offset {msg.offset()} "
@@ -400,6 +401,8 @@ class KafkaConsumer(Document):
 
     def _produce(self, producer, topic, value):
         try:
+            if not isinstance(value, str):
+                value = json.dumps(value)
             producer.produce(topic, value=value.encode('utf-8'))
             producer.poll(0)
         except Exception as e:
@@ -445,11 +448,10 @@ class KafkaConsumer(Document):
                 headers=headers,
                 timeout=10
             )
-            frappe.log_error("API Endpoint", f"{self.api_endpoint} - {response}")
             response_status = response.status_code
-            if response_status in [200,201,202]:
-                logger.info(f"API call successful for consumer {self.name}")
-                return True
+            if response_status in [200, 201, 202]:
+                logger.info(f"API call successful for consumer {self.name}: {self.api_endpoint} {response_status}")
+                return response.text if response.text else True
             return False
         except requests.exceptions.Timeout:
             logger.info(f"API call failed for consumer {self.name} - Timeout")

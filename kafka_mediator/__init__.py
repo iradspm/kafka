@@ -91,7 +91,6 @@ def monitor_kafka_metrics():
             conf['sasl.password'] = sasl_password
         try:
             lag = check_consumer_lag(conf, consumer.topic, consumer.consumer_group)
-            frappe.db.set_value("Kafka Consumer", consumer.name, "current_lag", lag)
 
             current_time = time.time()
             max_lag_threshold = consumer.max_lag_threshold or settings.max_lag_threshold
@@ -101,35 +100,61 @@ def monitor_kafka_metrics():
             scale_down_cooldown = consumer.scale_down_cooldown or settings.scale_down_cooldown
             messages_per_consumer = settings.messages_per_consumer
 
-            target_consumers = max(1, min(max_consumers, (lag + messages_per_consumer - 1) // messages_per_consumer))
+            # Update current_lag on all consumers in the group, not just the representative
+            group_members = frappe.get_all("Kafka Consumer", filters={
+                "topic": consumer.topic, "consumer_group": consumer.consumer_group
+            }, fields=["name"])
+            for member in group_members:
+                frappe.db.set_value("Kafka Consumer", member.name, "current_lag", lag)
+            frappe.db.commit()
+
             current_consumers = len(frappe.get_all("Kafka Consumer", filters={
                 "topic": consumer.topic, "consumer_group": consumer.consumer_group, "enabled": 1
             }))
 
-            if target_consumers > current_consumers:
-                last_scale_up = consumer.last_scale_up_time or 0
-                if current_time - last_scale_up > scale_up_cooldown:
-                    scale_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
-                    frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time)
-                    frappe.db.set_value("Kafka Consumer", consumer.name, "low_lag_count", 0)
-                else:
-                    logger.info(f"Consumer {consumer.name} scale-up on cooldown (lag: {lag}, target: {target_consumers})")
-            elif target_consumers < current_consumers:
-                low_lag_count = (consumer.low_lag_count or 0) + 1
-                frappe.db.set_value("Kafka Consumer", consumer.name, "low_lag_count", low_lag_count)
-                if low_lag_count >= 3:
-                    last_scale_down = consumer.last_scale_down_time or 0
-                    if current_time - last_scale_down > scale_down_cooldown:
-                        scale_down_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
-                        frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_down_time", current_time)
-                        frappe.db.set_value("Kafka Consumer", consumer.name, "low_lag_count", 0)
+            # Only act when lag crosses a threshold — between min and max is the hold zone
+            if lag >= max_lag_threshold:
+                target_consumers = max(1, min(max_consumers, (lag + messages_per_consumer - 1) // messages_per_consumer))
+                if target_consumers > current_consumers:
+                    last_scale_up = consumer.last_scale_up_time or 0
+                    if current_time - last_scale_up > scale_up_cooldown:
+                        scale_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
+                        frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time)
+                        # Reset low_lag_count on all group members so hysteresis restarts cleanly
+                        for member in group_members:
+                            frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
                     else:
-                        logger.info(f"Consumer {consumer.name} scale-down on cooldown (lag: {lag}, target: {target_consumers})")
+                        logger.info(f"Consumer {consumer.name} scale-up on cooldown (lag: {lag}, target: {target_consumers})")
+
+            elif lag <= min_lag_threshold:
+                target_consumers = max(1, (lag + messages_per_consumer - 1) // messages_per_consumer)
+                if target_consumers < current_consumers:
+                    # Accumulate low_lag_count on all group members so it survives representative changes
+                    low_lag_count = (consumer.low_lag_count or 0) + 1
+                    for member in group_members:
+                        frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", low_lag_count)
+                    if low_lag_count >= 3:
+                        last_scale_down = consumer.last_scale_down_time or 0
+                        if current_time - last_scale_down > scale_down_cooldown:
+                            scale_down_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
+                            frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_down_time", current_time)
+                            for member in group_members:
+                                frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
+                        else:
+                            logger.info(f"Consumer {consumer.name} scale-down on cooldown (lag: {lag}, target: {target_consumers})")
+                    else:
+                        logger.info(f"Consumer {consumer.name} low lag count: {low_lag_count}/3 (lag: {lag})")
                 else:
-                    logger.info(f"Consumer {consumer.name} low lag count: {low_lag_count}/3 (lag: {lag})")
+                    for member in group_members:
+                        frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
+
             else:
-                frappe.db.set_value("Kafka Consumer", consumer.name, "low_lag_count", 0)
-                logger.info(f"Consumer {consumer.name} lag stable: {lag}, consumers: {current_consumers}")
+                # Lag is in the hold zone — reset low_lag_count so partial hysteresis doesn't carry over
+                for member in group_members:
+                    frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
+                logger.info(f"Consumer {consumer.name} lag in hold zone: {lag} (min: {min_lag_threshold}, max: {max_lag_threshold}), consumers: {current_consumers}")
+
+            frappe.db.commit()
 
         except Exception as e:
             frappe.log_error(f"Failed to monitor consumer {consumer.name}: {str(e)}")
@@ -144,11 +169,10 @@ def check_consumer_lag(conf, topic, group_id):
         committed = consumer.committed(partitions, timeout=10)
         total_lag = 0
         for partition in committed:
-            if partition.offset == -1:
-                continue
             topic_partition = TopicPartition(topic, partition.partition)
             _, high = consumer.get_watermark_offsets(topic_partition)
-            lag = high - partition.offset
+            committed_offset = partition.offset if partition.offset != -1 else 0
+            lag = high - committed_offset
             total_lag += lag if lag > 0 else 0
         return total_lag
     except Exception as e:
@@ -207,6 +231,7 @@ def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
                 "api_key": consumer.api_key,
                 "output_topic": consumer.output_topic,
                 "failure_topic": consumer.failure_topic,
+                "max_retries": consumer.max_retries,
                 "max_lag_threshold": settings.max_lag_threshold,
                 "min_lag_threshold": settings.min_lag_threshold,
                 "max_consumers": settings.max_consumers,
@@ -254,6 +279,214 @@ def scale_down_consumer(consumer_name, topic_name, consumer_group, target_consum
             logger.info(f"Scaled down: disabled consumer {consumer.name} for topic {topic_name}")
     except Exception as e:
         frappe.log_error(f"Failed to scale down consumer {consumer_name}: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Live stats — called on demand by API endpoints
+# ---------------------------------------------------------------------------
+
+def fetch_live_topic_stats(topic_name):
+    """
+    Fetch message_count, lag, partition_count and replication_factor for a
+    single topic directly from Kafka. Returns a dict. Raises on connection failure.
+    """
+    topic_doc = frappe.get_doc("Kafka Topic", {"topic_name": topic_name})
+    cluster = frappe.get_doc("Kafka Cluster", topic_doc.cluster)
+
+    conf = {
+        'bootstrap.servers': cluster.bootstrap_servers,
+        'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+        'group.id': f"kafka_mediator_live_stats_{cluster.name}"
+    }
+    if cluster.sasl_mechanism:
+        conf['sasl.mechanisms'] = cluster.sasl_mechanism
+    if cluster.sasl_username:
+        conf['sasl.username'] = cluster.sasl_username
+    sasl_password = cluster.get_password("sasl_password")
+    if sasl_password:
+        conf['sasl.password'] = sasl_password
+
+    consumer = None
+    admin_client = None
+    try:
+        consumer = Consumer(conf)
+        admin_client = AdminClient(conf)
+
+        cluster_metadata = consumer.list_topics(topic=topic_name, timeout=10)
+        if topic_name not in cluster_metadata.topics:
+            raise ValueError(f"Topic '{topic_name}' not found in cluster")
+
+        partitions = [
+            TopicPartition(topic_name, p)
+            for p in cluster_metadata.topics[topic_name].partitions
+        ]
+
+        message_count = 0
+        for partition in partitions:
+            try:
+                low, high = consumer.get_watermark_offsets(partition)
+                message_count += max(0, high - low)
+            except Exception as e:
+                logger.error(f"Watermark failed for {topic_name}[{partition.partition}]: {e}")
+
+        # Lag per consumer group
+        groups = frappe.get_all(
+            "Kafka Consumer",
+            filters={"topic": topic_name},
+            fields=["consumer_group"],
+            distinct=True
+        )
+        total_lag = 0
+        for g in groups:
+            try:
+                group_conf = dict(conf, **{'group.id': g.consumer_group})
+                total_lag += check_consumer_lag(group_conf, topic_name, g.consumer_group)
+            except Exception as e:
+                logger.error(f"Lag check failed for group {g.consumer_group} on {topic_name}: {e}")
+
+        # Replication factor
+        replication_factor = topic_doc.replication_factor or 1
+        try:
+            futures = admin_client.describe_topics(
+                TopicCollection([topic_name]), request_timeout=10
+            )
+            topic_desc = futures[topic_name].result()
+            if topic_desc.partitions:
+                replication_factor = len(topic_desc.partitions[0].replicas)
+        except Exception as e:
+            logger.error(f"Replication factor fetch failed for {topic_name}: {e}")
+
+        active_consumers = frappe.db.count(
+            "Kafka Consumer", {"topic": topic_name, "enabled": 1}
+        )
+
+        return {
+            "message_count": message_count,
+            "total_lag": total_lag,
+            "partition_count": len(partitions),
+            "replication_factor": replication_factor,
+            "active_consumers": active_consumers,
+        }
+    finally:
+        try:
+            if consumer:
+                consumer.close()
+            if admin_client:
+                admin_client.close()
+        except Exception:
+            pass
+
+
+def fetch_live_cluster_stats(cluster_name):
+    """
+    Fetch live stats for every topic on a cluster in a single connection pass.
+    Returns a dict keyed by topic_name with message_count, lag, partition_count,
+    replication_factor, active_consumers.
+    """
+    cluster = frappe.get_doc("Kafka Cluster", cluster_name)
+    conf = {
+        'bootstrap.servers': cluster.bootstrap_servers,
+        'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+        'group.id': f"kafka_mediator_live_stats_{cluster_name}"
+    }
+    if cluster.sasl_mechanism:
+        conf['sasl.mechanisms'] = cluster.sasl_mechanism
+    if cluster.sasl_username:
+        conf['sasl.username'] = cluster.sasl_username
+    sasl_password = cluster.get_password("sasl_password")
+    if sasl_password:
+        conf['sasl.password'] = sasl_password
+
+    topics = frappe.get_all(
+        "Kafka Topic", filters={"cluster": cluster_name},
+        fields=["name", "topic_name", "replication_factor"]
+    )
+
+    all_groups = frappe.get_all(
+        "Kafka Consumer",
+        filters={"cluster": cluster_name},
+        fields=["topic", "consumer_group"],
+        distinct=True
+    )
+    groups_by_topic = {}
+    for row in all_groups:
+        groups_by_topic.setdefault(row.topic, []).append(row.consumer_group)
+
+    active_counts = {}
+    for row in frappe.get_all("Kafka Consumer", filters={"enabled": 1, "cluster": cluster_name}, fields=["topic"]):
+        active_counts[row.topic] = active_counts.get(row.topic, 0) + 1
+
+    consumer = None
+    admin_client = None
+    results = {}
+    try:
+        consumer = Consumer(conf)
+        admin_client = AdminClient(conf)
+        cluster_metadata = consumer.list_topics(timeout=10)
+
+        topic_names_to_describe = [
+            t.topic_name for t in topics if t.topic_name in cluster_metadata.topics
+        ]
+        describe_futures = {}
+        if topic_names_to_describe:
+            describe_futures = admin_client.describe_topics(
+                TopicCollection(topic_names_to_describe), request_timeout=30
+            )
+
+        for topic in topics:
+            if topic.topic_name not in cluster_metadata.topics:
+                continue
+            try:
+                partitions = [
+                    TopicPartition(topic.topic_name, p)
+                    for p in cluster_metadata.topics[topic.topic_name].partitions
+                ]
+
+                message_count = 0
+                for partition in partitions:
+                    try:
+                        low, high = consumer.get_watermark_offsets(partition)
+                        message_count += max(0, high - low)
+                    except Exception as e:
+                        logger.error(f"Watermark failed for {topic.topic_name}[{partition.partition}]: {e}")
+
+                total_lag = 0
+                for group_id in groups_by_topic.get(topic.topic_name, []):
+                    try:
+                        group_conf = dict(conf, **{'group.id': group_id})
+                        total_lag += check_consumer_lag(group_conf, topic.topic_name, group_id)
+                    except Exception as e:
+                        logger.error(f"Lag check failed for group {group_id} on {topic.topic_name}: {e}")
+
+                replication_factor = topic.replication_factor or 1
+                if topic.topic_name in describe_futures:
+                    try:
+                        topic_desc = describe_futures[topic.topic_name].result()
+                        if topic_desc.partitions:
+                            replication_factor = len(topic_desc.partitions[0].replicas)
+                    except Exception as e:
+                        logger.error(f"Replication factor failed for {topic.topic_name}: {e}")
+
+                results[topic.topic_name] = {
+                    "message_count": message_count,
+                    "total_lag": total_lag,
+                    "partition_count": len(partitions),
+                    "replication_factor": replication_factor,
+                    "active_consumers": active_counts.get(topic.topic_name, 0),
+                }
+            except Exception as e:
+                logger.error(f"Live stats failed for topic {topic.topic_name}: {e}")
+
+    finally:
+        try:
+            if consumer:
+                consumer.close()
+            if admin_client:
+                admin_client.close()
+        except Exception:
+            pass
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -469,9 +702,10 @@ def update_cluster_stats():
                 total_lag += topic_doc.lag or 0
                 total_consumers += topic_doc.active_consumers or 0
 
+            non_internal_count = len([t for t in topics.topics if not t.startswith('__')])
             stats_values = {
                 "cluster": cluster.name,
-                "total_topics": len([t for t in topics.topics if not t.startswith('__')]),
+                "total_topics": non_internal_count,
                 "total_messages": total_messages,
                 "total_lag": total_lag,
                 "total_consumers": total_consumers,
@@ -483,6 +717,8 @@ def update_cluster_stats():
                                     stats_values, update_modified=False)
             else:
                 frappe.get_doc({"doctype": "Kafka Cluster Stats", **stats_values}).db_insert()
+            # Keep topic_count on the cluster doc in sync without opening a second connection
+            frappe.db.set_value("Kafka Cluster", cluster.name, "topic_count", non_internal_count)
             frappe.db.commit()
             logger.info(
                 f"Updated stats for cluster {cluster.name}: "
@@ -638,7 +874,7 @@ def publish_message(topic_name, message):
             producer = frappe.get_doc("Kafka Producer", producers[0].get('name'))
             if not isinstance(message, str):
                 message = json.dumps(message)
-            producer.publish_message(json.dumps(message))
+            producer.publish_message(message)
             return {"status": "success"}
         else:
             frappe.throw("No associated producer found for the topic")
