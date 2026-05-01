@@ -27,11 +27,10 @@ class KafkaCluster(Document):
 			if self.sasl_password:
 				conf['sasl.password'] = self.get_password("sasl_password")
 
-			logger.info(f"Configuration: {conf}")
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			self.status = "Connected"
-			self.topic_count = len(topics.topics)
+			self.topic_count = len([t for t in topics.topics if not t.startswith('__')])
 			logger.info(f"Validated cluster {self.name} with {self.topic_count} topics")
 		except Exception as e:
 			self.status = "Failed"

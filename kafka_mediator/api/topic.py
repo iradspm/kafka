@@ -4,8 +4,10 @@ import json
 from kafka_mediator import (
     get_default_settings,
     validate_payload,
-    format_response
-    )
+    format_response,
+    fetch_live_topic_stats,
+    fetch_live_cluster_stats,
+)
 
 @frappe.whitelist()
 @validate_payload("topic_name", "num_partitions", "replication_factor")
@@ -128,6 +130,7 @@ def get_topic_stats(**kwargs):
 
     try:
         topic = frappe.get_doc("Kafka Topic", {"topic_name": topic_name})
+        live = fetch_live_topic_stats(topic_name)
 
         consumers_raw = frappe.get_all(
             "Kafka Consumer",
@@ -135,8 +138,6 @@ def get_topic_stats(**kwargs):
             fields=["name", "consumer_group", "enabled", "current_lag",
                     "thread_status", "last_heartbeat", "assigned_partitions"]
         )
-
-        # Parse assigned_partitions from stored JSON string to a real list
         consumers = []
         for c in consumers_raw:
             try:
@@ -151,12 +152,11 @@ def get_topic_stats(**kwargs):
             data={
                 "topic_name":         topic.topic_name,
                 "cluster":            topic.cluster,
-                "partitions":         topic.num_partitions,
-                "replication_factor": topic.replication_factor,
-                "message_count":      topic.message_count or 0,
-                "total_lag":          topic.lag or 0,
-                "active_consumers":   topic.active_consumers or 0,
-                "last_updated":       str(topic.last_updated) if topic.last_updated else None,
+                "partitions":         live["partition_count"],
+                "replication_factor": live["replication_factor"],
+                "message_count":      live["message_count"],
+                "total_lag":          live["total_lag"],
+                "active_consumers":   live["active_consumers"],
                 "consumers":          consumers
             }
         )
@@ -190,39 +190,22 @@ def get_cluster_stats(**kwargs):
         )
 
     try:
-        # Cluster-level summary
-        if not frappe.db.exists("Kafka Cluster Stats", {"cluster": cluster_name}):
-            return format_response(
-                status_code=404,
-                message=f"No stats recorded yet for cluster '{cluster_name}'. "
-                        f"Stats are refreshed every 5 minutes."
-            )
+        live_by_topic = fetch_live_cluster_stats(cluster_name)
 
-        stats = frappe.get_doc("Kafka Cluster Stats", {"cluster": cluster_name})
-
-        # Per-topic breakdown — single query
-        topics = frappe.get_all(
+        topic_docs = frappe.get_all(
             "Kafka Topic",
             filters={"cluster": cluster_name},
-            fields=[
-                "topic_name", "num_partitions", "replication_factor",
-                "message_count", "lag", "active_consumers", "last_updated"
-            ],
+            fields=["topic_name", "num_partitions", "replication_factor"],
             order_by="topic_name asc"
         )
+        topic_names = [t.topic_name for t in topic_docs]
 
-        # Fetch all consumers for this cluster in one query, group in Python
-        # (avoids N+1: one query here instead of one per topic)
-        topic_names = [t.topic_name for t in topics]
         all_consumers = frappe.get_all(
             "Kafka Consumer",
             filters=[["topic", "in", topic_names]] if topic_names else [["topic", "=", ""]],
             fields=["name", "topic", "consumer_group", "enabled", "current_lag", "thread_status"]
         )
 
-        # Build two views per topic:
-        #   consumers      — every individual consumer doc (shows per-instance thread_status)
-        #   consumer_groups — one entry per group (aggregated lag, worst-case status)
         consumers_by_topic = {}
         groups_by_topic = {}
         for c in all_consumers:
@@ -233,7 +216,6 @@ def get_cluster_stats(**kwargs):
                 "current_lag": c.current_lag,
                 "thread_status": c.thread_status
             })
-            # Aggregate per group: sum lag, surface worst status
             group_key = (c.topic, c.consumer_group)
             if group_key not in groups_by_topic:
                 groups_by_topic[group_key] = {
@@ -246,29 +228,43 @@ def get_cluster_stats(**kwargs):
             entry["total_lag"] += c.current_lag or 0
             if c.enabled:
                 entry["active_count"] += 1
-            # Escalate: error > restarting > running > stopped
             priority = {"error": 3, "restarting": 2, "running": 1, "stopped": 0}
             if priority.get(c.thread_status or "stopped", 0) > priority.get(entry["status"], 0):
                 entry["status"] = c.thread_status
 
-        for topic in topics:
-            topic["consumers"] = consumers_by_topic.get(topic.topic_name, [])
-            topic["consumer_groups"] = [
-                v for k, v in groups_by_topic.items() if k[0] == topic.topic_name
-            ]
-            topic["last_updated"] = str(topic["last_updated"]) if topic.get("last_updated") else None
+        total_messages = 0
+        total_lag = 0
+        total_consumers = 0
+        topics = []
+        for t in topic_docs:
+            live = live_by_topic.get(t.topic_name, {})
+            msg_count = live.get("message_count", 0)
+            lag = live.get("total_lag", 0)
+            active = live.get("active_consumers", 0)
+            total_messages += msg_count
+            total_lag += lag
+            total_consumers += active
+            topics.append({
+                "topic_name":         t.topic_name,
+                "partitions":         live.get("partition_count", t.num_partitions),
+                "replication_factor": live.get("replication_factor", t.replication_factor),
+                "message_count":      msg_count,
+                "lag":                lag,
+                "active_consumers":   active,
+                "consumers":          consumers_by_topic.get(t.topic_name, []),
+                "consumer_groups":    [v for k, v in groups_by_topic.items() if k[0] == t.topic_name],
+            })
 
         return format_response(
             status_code=200,
             message="Cluster stats retrieved successfully.",
             data={
                 "cluster_name":    cluster_name,
-                "broker_status":   stats.broker_status,
-                "total_topics":    stats.total_topics or 0,
-                "total_messages":  stats.total_messages or 0,
-                "total_lag":       stats.total_lag or 0,
-                "total_consumers": stats.total_consumers or 0,
-                "last_updated":    str(stats.last_updated) if stats.last_updated else None,
+                "broker_status":   "Connected",
+                "total_topics":    len(topics),
+                "total_messages":  total_messages,
+                "total_lag":       total_lag,
+                "total_consumers": total_consumers,
                 "topics":          topics
             }
         )

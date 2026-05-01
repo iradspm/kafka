@@ -17,32 +17,16 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MAX_RETRIES = 3
 HEARTBEAT_INTERVAL = 30  # seconds between heartbeat DB writes
 
 
 class KafkaConsumer(Document):
-    executor = ThreadPoolExecutor(max_workers=10)
     def validate(self):
         if not self.consumer_group:
             frappe.throw(
                 "Consumer Group is required. All consumers for the same topic "
                 "must share the same consumer_group value to enable parallel scaling."
             )
-
-        # Enforce consistent requeue_on_failure across the consumer group
-        peers = frappe.get_all(
-            "Kafka Consumer",
-            filters={"consumer_group": self.consumer_group, "name": ["!=", self.name]},
-            fields=["name", "requeue_on_failure"],
-        )
-        if peers:
-            peer_values = {p.requeue_on_failure for p in peers}
-            if len(peer_values) > 1:
-                frappe.throw(
-                    f"Consumers in group '{self.consumer_group}' have inconsistent "
-                    f"'Requeue on Failure' settings. Fix the existing consumers first."
-                )
 
         cluster = frappe.get_doc("Kafka Cluster", self.cluster)
         conf = {
@@ -87,11 +71,10 @@ class KafkaConsumer(Document):
     RESTART_ON_CHANGE = {
         "api_endpoint", "api_username", "api_password",
         "api_consumer_key", "api_consumer_secret", "api_key",
-        "output_topic", "failure_topic", "requeue_on_failure", "topic", "cluster"
+        "output_topic", "failure_topic", "topic", "cluster", "max_retries"
     }
 
-    # Fields that must be identical across all consumers in the same group
-    SYNC_ACROSS_GROUP = {"failure_topic", "requeue_on_failure"}
+    SYNC_ACROSS_GROUP = {"failure_topic"}
 
     def on_update(self):
         """
@@ -141,25 +124,33 @@ class KafkaConsumer(Document):
             f"current thread_status={thread_status} — restarting thread."
         )
 
-        # Signal the running thread to stop, then start a fresh one.
-        # The new thread will read all values from the DB via frappe.get_doc.
+        # Signal the running thread to stop, then schedule a restart in a daemon
+        # thread so the web worker is not blocked waiting for the old thread to drain.
         frappe.db.set_value("Kafka Consumer", self.name, "enabled", 0)
         frappe.db.commit()
 
-        # Brief pause so the polling loop sees enabled=0 and exits cleanly
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            status = frappe.db.get_value("Kafka Consumer", self.name, "thread_status")
-            if status in ("stopped", "error", None):
-                break
-            time.sleep(0.5)
+        consumer_name = self.name
+        site = frappe.local.site
 
-        frappe.db.set_value("Kafka Consumer", self.name, "enabled", 1)
-        frappe.db.commit()
+        def _restart():
+            import frappe as _frappe
+            _frappe.init(site=site)
+            _frappe.connect()
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    status = _frappe.db.get_value("Kafka Consumer", consumer_name, "thread_status")
+                    if status in ("stopped", "error", None):
+                        break
+                    time.sleep(0.5)
+                _frappe.db.set_value("Kafka Consumer", consumer_name, "enabled", 1)
+                _frappe.db.commit()
+                fresh = _frappe.get_doc("Kafka Consumer", consumer_name)
+                fresh.restart_consumer_thread()
+            finally:
+                _frappe.destroy()
 
-        # Spawn the new thread from a fresh document so self.* has current values
-        fresh = frappe.get_doc("Kafka Consumer", self.name)
-        fresh.restart_consumer_thread()
+        threading.Thread(target=_restart, daemon=True).start()
 
     def restart_consumer_thread(self):
         """Restart consumer thread. Only call when the thread is confirmed dead."""
@@ -192,7 +183,10 @@ class KafkaConsumer(Document):
                 base_conf['sasl.password'] = sasl_password
 
             producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
-            self._producer = producer  # accessible from _process_message worker threads
+            self._producer = producer
+            self._max_retries = self.max_retries or frappe.db.get_single_value("Kafka Settings", "max_retries") or 1
+            # Per-consumer executor — prevents one slow consumer starving others
+            self._executor = ThreadPoolExecutor(max_workers=10)
 
             # Mark thread as running
             frappe.db.set_value("Kafka Consumer", self.name, {
@@ -259,7 +253,7 @@ class KafkaConsumer(Document):
 
                         # Submit all messages to the executor concurrently
                         futures = {
-                            self.executor.submit(self._process_message, msg): msg
+                            self._executor.submit(self._process_message, msg): msg
                             for msg in valid_msgs
                         }
 
@@ -341,6 +335,10 @@ class KafkaConsumer(Document):
                     producer.flush()
                 except Exception:
                     pass
+                try:
+                    self._executor.shutdown(wait=False)
+                except Exception:
+                    pass
 
             frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped")
             frappe.db.commit()
@@ -375,21 +373,22 @@ class KafkaConsumer(Document):
 
     def _process_message_inner(self, msg):
         message = msg.value().decode('utf-8')
+        max_retries = self._max_retries
         response = False
 
-        for attempt in range(MAX_RETRIES + 1):
+        for attempt in range(max_retries + 1):
             response = self.call_api_endpoint(message)
             if response:
                 break
-            if attempt < MAX_RETRIES:
+            if attempt < max_retries:
                 logger.warning(
-                    f"Consumer {self.name}: retry {attempt + 1}/{MAX_RETRIES} "
+                    f"Consumer {self.name}: retry {attempt + 1}/{max_retries} "
                     f"for offset {msg.offset()} partition {msg.partition()}"
                 )
                 time.sleep(2 ** attempt)
 
         if response:
-            if self.output_topic:
+            if self.output_topic and isinstance(response, str):
                 self._produce(self._producer, self.output_topic, response)
             logger.info(
                 f"Consumer {self.name}: processed offset {msg.offset()} "
@@ -397,34 +396,16 @@ class KafkaConsumer(Document):
             )
             return True
 
-        if self.failure_topic and self.requeue_on_failure:
-            # Republish original payload to failure topic so it re-enters the pipeline
+        if self.failure_topic:
+            # Always forward original payload — failure topic consumer processes it identically
             self._produce(self._producer, self.failure_topic, message)
             logger.error(
                 f"Consumer {self.name}: message at offset {msg.offset()} "
-                f"requeued to '{self.failure_topic}'"
+                f"forwarded to failure topic '{self.failure_topic}' after {max_retries} retries"
             )
-            return True  # requeued — safe to commit
+            return True  # forwarded — safe to commit
 
-        if self.failure_topic:
-            # DLQ: wrap with metadata for inspection/replay
-            dlq_payload = json.dumps({
-                "original_message": message,
-                "topic": msg.topic(),
-                "partition": msg.partition(),
-                "offset": msg.offset(),
-                "retries": MAX_RETRIES,
-                "consumer": self.name,
-                "error": "API call failed after max retries"
-            })
-            self._produce(self._producer, self.failure_topic, dlq_payload)
-            logger.error(
-                f"Consumer {self.name}: message at offset {msg.offset()} "
-                f"routed to DLQ '{self.failure_topic}'"
-            )
-            return True  # DLQ'd — safe to commit
-
-        # No failure_topic: do not commit so Kafka redelivers on next poll
+        # No failure_topic: leave uncommitted so Kafka redelivers on next poll
         frappe.log_error(
             f"Consumer {self.name}: no failure_topic set, leaving offset {msg.offset()} "
             f"partition {msg.partition()} uncommitted for redelivery"
@@ -433,6 +414,8 @@ class KafkaConsumer(Document):
 
     def _produce(self, producer, topic, value):
         try:
+            if not isinstance(value, str):
+                value = json.dumps(value)
             producer.produce(topic, value=value.encode('utf-8'))
             producer.poll(0)
         except Exception as e:
@@ -478,11 +461,10 @@ class KafkaConsumer(Document):
                 headers=headers,
                 timeout=10
             )
-            frappe.log_error("API Endpoint", f"{self.api_endpoint} - {response}")
             response_status = response.status_code
-            if response_status in [200,201,202]:
-                logger.info(f"API call successful for consumer {self.name}")
-                return True
+            if response_status in [200, 201, 202]:
+                logger.info(f"API call successful for consumer {self.name}: {self.api_endpoint} {response_status}")
+                return response.text if response.text else True
             return False
         except requests.exceptions.Timeout:
             logger.info(f"API call failed for consumer {self.name} - Timeout")
@@ -492,23 +474,6 @@ class KafkaConsumer(Document):
             return False
 
     def generate_hie_auth_token(self, consumer_key, consumer_secret):
-        try:
-            now = int(time.time())
-            payload = {
-                "key": consumer_key,
-                "iat": now,
-                "exp": now + 3600
-            }
-            headers = {
-                "alg": "HS256",
-                "typ": "JWT"
-            }
-            token = jwt.encode(
-                payload,
-                consumer_secret,
-                algorithm="HS256",
-                headers=headers
-            )
-            return token
-        except Exception:
-            return None
+        now = int(time.time())
+        payload = {"key": consumer_key, "iat": now, "exp": now + 3600}
+        return jwt.encode(payload, consumer_secret, algorithm="HS256", headers={"alg": "HS256", "typ": "JWT"})
