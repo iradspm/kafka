@@ -168,10 +168,13 @@ app_license = "mit"
 
 scheduler_events = {
     "cron": {
-        # Scaling decisions + topic/cluster stats refresh every 5 min
+        # Topic stats first — cluster stats aggregate from topic stats written in this pass
         "*/5 * * * *": [
             "kafka_mediator.monitor_kafka_metrics",
             "kafka_mediator.update_topic_stats",
+        ],
+        # Cluster stats run one minute later so topic stats are always fresh
+        "1-56/5 * * * *": [
             "kafka_mediator.update_cluster_stats",
         ],
         # Dead consumer watchdog — restart stale threads every minute

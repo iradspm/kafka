@@ -21,7 +21,6 @@ HEARTBEAT_INTERVAL = 30  # seconds between heartbeat DB writes
 
 
 class KafkaConsumer(Document):
-    executor = ThreadPoolExecutor(max_workers=10)
     def validate(self):
         if not self.consumer_group:
             frappe.throw(
@@ -125,25 +124,33 @@ class KafkaConsumer(Document):
             f"current thread_status={thread_status} — restarting thread."
         )
 
-        # Signal the running thread to stop, then start a fresh one.
-        # The new thread will read all values from the DB via frappe.get_doc.
+        # Signal the running thread to stop, then schedule a restart in a daemon
+        # thread so the web worker is not blocked waiting for the old thread to drain.
         frappe.db.set_value("Kafka Consumer", self.name, "enabled", 0)
         frappe.db.commit()
 
-        # Brief pause so the polling loop sees enabled=0 and exits cleanly
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            status = frappe.db.get_value("Kafka Consumer", self.name, "thread_status")
-            if status in ("stopped", "error", None):
-                break
-            time.sleep(0.5)
+        consumer_name = self.name
+        site = frappe.local.site
 
-        frappe.db.set_value("Kafka Consumer", self.name, "enabled", 1)
-        frappe.db.commit()
+        def _restart():
+            import frappe as _frappe
+            _frappe.init(site=site)
+            _frappe.connect()
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    status = _frappe.db.get_value("Kafka Consumer", consumer_name, "thread_status")
+                    if status in ("stopped", "error", None):
+                        break
+                    time.sleep(0.5)
+                _frappe.db.set_value("Kafka Consumer", consumer_name, "enabled", 1)
+                _frappe.db.commit()
+                fresh = _frappe.get_doc("Kafka Consumer", consumer_name)
+                fresh.restart_consumer_thread()
+            finally:
+                _frappe.destroy()
 
-        # Spawn the new thread from a fresh document so self.* has current values
-        fresh = frappe.get_doc("Kafka Consumer", self.name)
-        fresh.restart_consumer_thread()
+        threading.Thread(target=_restart, daemon=True).start()
 
     def restart_consumer_thread(self):
         """Restart consumer thread. Only call when the thread is confirmed dead."""
@@ -176,8 +183,10 @@ class KafkaConsumer(Document):
                 base_conf['sasl.password'] = sasl_password
 
             producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
-            self._producer = producer  # accessible from _process_message worker threads
+            self._producer = producer
             self._max_retries = self.max_retries or frappe.db.get_single_value("Kafka Settings", "max_retries") or 1
+            # Per-consumer executor — prevents one slow consumer starving others
+            self._executor = ThreadPoolExecutor(max_workers=10)
 
             # Mark thread as running
             frappe.db.set_value("Kafka Consumer", self.name, {
@@ -244,7 +253,7 @@ class KafkaConsumer(Document):
 
                         # Submit all messages to the executor concurrently
                         futures = {
-                            self.executor.submit(self._process_message, msg): msg
+                            self._executor.submit(self._process_message, msg): msg
                             for msg in valid_msgs
                         }
 
@@ -324,6 +333,10 @@ class KafkaConsumer(Document):
                     pass
                 try:
                     producer.flush()
+                except Exception:
+                    pass
+                try:
+                    self._executor.shutdown(wait=False)
                 except Exception:
                     pass
 
@@ -461,23 +474,6 @@ class KafkaConsumer(Document):
             return False
 
     def generate_hie_auth_token(self, consumer_key, consumer_secret):
-        try:
-            now = int(time.time())
-            payload = {
-                "key": consumer_key,
-                "iat": now,
-                "exp": now + 3600
-            }
-            headers = {
-                "alg": "HS256",
-                "typ": "JWT"
-            }
-            token = jwt.encode(
-                payload,
-                consumer_secret,
-                algorithm="HS256",
-                headers=headers
-            )
-            return token
-        except Exception:
-            return None
+        now = int(time.time())
+        payload = {"key": consumer_key, "iat": now, "exp": now + 3600}
+        return jwt.encode(payload, consumer_secret, algorithm="HS256", headers={"alg": "HS256", "typ": "JWT"})
