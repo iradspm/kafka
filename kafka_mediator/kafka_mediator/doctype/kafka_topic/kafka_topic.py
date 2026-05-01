@@ -3,7 +3,7 @@
 
 import frappe
 from frappe.model.document import Document
-from confluent_kafka.admin import AdminClient, NewTopic, NewPartitions  # ← add NewPartitions
+from confluent_kafka.admin import AdminClient, NewTopic, NewPartitions
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -72,9 +72,9 @@ class KafkaTopic(Document):
         try:
             admin_client = AdminClient(conf)
 
-            new_parts = NewPartitions(self.topic_name, new_total=new_partitions)  # ← fixed
+            new_parts = NewPartitions(self.topic_name, new_total_count=new_partitions)
 
-            futures = admin_client.create_partitions([new_parts], request_timeout=30)  # ← list of NewPartitions
+            futures = admin_client.create_partitions([new_parts], request_timeout=30)
             futures[self.topic_name].result()
 
             frappe.db.set_value("Kafka Topic", self.name, "num_partitions", new_partitions)

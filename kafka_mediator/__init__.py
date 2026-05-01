@@ -80,11 +80,15 @@ def monitor_kafka_metrics():
         conf = {
             'bootstrap.servers': cluster.bootstrap_servers,
             'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-            'sasl.mechanisms': cluster.sasl_mechanism or None,
-            'sasl.username': cluster.sasl_username or None,
-            'sasl.password': cluster.get_password("sasl_password") or None,
             'group.id': consumer.consumer_group
         }
+        if cluster.sasl_mechanism:
+            conf['sasl.mechanisms'] = cluster.sasl_mechanism
+        if cluster.sasl_username:
+            conf['sasl.username'] = cluster.sasl_username
+        sasl_password = cluster.get_password("sasl_password")
+        if sasl_password:
+            conf['sasl.password'] = sasl_password
         try:
             lag = check_consumer_lag(conf, consumer.topic, consumer.consumer_group)
             frappe.db.set_value("Kafka Consumer", consumer.name, "current_lag", lag)
@@ -316,11 +320,15 @@ def update_topic_stats():
         base_conf = {
             'bootstrap.servers': cluster.bootstrap_servers,
             'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-            'sasl.mechanisms': cluster.sasl_mechanism or None,
-            'sasl.username': cluster.sasl_username,
-            'sasl.password': cluster.get_password("sasl_password") or None,
             'group.id': f"kafka_mediator_stats_{cluster_name}"
         }
+        if cluster.sasl_mechanism:
+            base_conf['sasl.mechanisms'] = cluster.sasl_mechanism
+        if cluster.sasl_username:
+            base_conf['sasl.username'] = cluster.sasl_username
+        sasl_password = cluster.get_password("sasl_password")
+        if sasl_password:
+            base_conf['sasl.password'] = sasl_password
 
         # One Consumer + AdminClient for all topics on this cluster
         consumer = None
@@ -437,10 +445,14 @@ def update_cluster_stats():
         conf = {
             'bootstrap.servers': cluster.bootstrap_servers,
             'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-            'sasl.mechanisms': cluster.sasl_mechanism or None,
-            'sasl.username': cluster.sasl_username or None,
-            'sasl.password': cluster.get_password("sasl_password") or None,
         }
+        if cluster.sasl_mechanism:
+            conf['sasl.mechanisms'] = cluster.sasl_mechanism
+        if cluster.sasl_username:
+            conf['sasl.username'] = cluster.sasl_username
+        sasl_password = cluster.get_password("sasl_password")
+        if sasl_password:
+            conf['sasl.password'] = sasl_password
         try:
             admin_client = AdminClient(conf)
             topics = admin_client.list_topics(timeout=10)
