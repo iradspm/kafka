@@ -30,20 +30,6 @@ class KafkaConsumer(Document):
                 "must share the same consumer_group value to enable parallel scaling."
             )
 
-        # Enforce consistent requeue_on_failure across the consumer group
-        peers = frappe.get_all(
-            "Kafka Consumer",
-            filters={"consumer_group": self.consumer_group, "name": ["!=", self.name]},
-            fields=["name", "requeue_on_failure"],
-        )
-        if peers:
-            peer_values = {p.requeue_on_failure for p in peers}
-            if len(peer_values) > 1:
-                frappe.throw(
-                    f"Consumers in group '{self.consumer_group}' have inconsistent "
-                    f"'Requeue on Failure' settings. Fix the existing consumers first."
-                )
-
         cluster = frappe.get_doc("Kafka Cluster", self.cluster)
         conf = {
             'bootstrap.servers': cluster.bootstrap_servers,
@@ -87,11 +73,10 @@ class KafkaConsumer(Document):
     RESTART_ON_CHANGE = {
         "api_endpoint", "api_username", "api_password",
         "api_consumer_key", "api_consumer_secret", "api_key",
-        "output_topic", "failure_topic", "requeue_on_failure", "topic", "cluster"
+        "output_topic", "failure_topic", "topic", "cluster"
     }
 
-    # Fields that must be identical across all consumers in the same group
-    SYNC_ACROSS_GROUP = {"failure_topic", "requeue_on_failure"}
+    SYNC_ACROSS_GROUP = {"failure_topic"}
 
     def on_update(self):
         """
@@ -397,34 +382,16 @@ class KafkaConsumer(Document):
             )
             return True
 
-        if self.failure_topic and self.requeue_on_failure:
-            # Republish original payload to failure topic so it re-enters the pipeline
+        if self.failure_topic:
+            # Always forward original payload — failure topic consumer processes it identically
             self._produce(self._producer, self.failure_topic, message)
             logger.error(
                 f"Consumer {self.name}: message at offset {msg.offset()} "
-                f"requeued to '{self.failure_topic}'"
+                f"forwarded to failure topic '{self.failure_topic}' after {MAX_RETRIES} retries"
             )
-            return True  # requeued — safe to commit
+            return True  # forwarded — safe to commit
 
-        if self.failure_topic:
-            # DLQ: wrap with metadata for inspection/replay
-            dlq_payload = json.dumps({
-                "original_message": message,
-                "topic": msg.topic(),
-                "partition": msg.partition(),
-                "offset": msg.offset(),
-                "retries": MAX_RETRIES,
-                "consumer": self.name,
-                "error": "API call failed after max retries"
-            })
-            self._produce(self._producer, self.failure_topic, dlq_payload)
-            logger.error(
-                f"Consumer {self.name}: message at offset {msg.offset()} "
-                f"routed to DLQ '{self.failure_topic}'"
-            )
-            return True  # DLQ'd — safe to commit
-
-        # No failure_topic: do not commit so Kafka redelivers on next poll
+        # No failure_topic: leave uncommitted so Kafka redelivers on next poll
         frappe.log_error(
             f"Consumer {self.name}: no failure_topic set, leaving offset {msg.offset()} "
             f"partition {msg.partition()} uncommitted for redelivery"
