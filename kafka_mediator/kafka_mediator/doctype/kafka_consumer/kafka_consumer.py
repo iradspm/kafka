@@ -71,7 +71,7 @@ class KafkaConsumer(Document):
     RESTART_ON_CHANGE = {
         "api_endpoint", "api_username", "api_password",
         "api_consumer_key", "api_consumer_secret", "api_key",
-        "output_topic", "failure_topic", "topic", "cluster", "max_retries"
+        "output_topic", "failure_topic", "topic", "cluster"
     }
 
     SYNC_ACROSS_GROUP = {"failure_topic"}
@@ -184,7 +184,6 @@ class KafkaConsumer(Document):
 
             producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
             self._producer = producer
-            self._max_retries = self.max_retries or frappe.db.get_single_value("Kafka Settings", "max_retries") or 1
             # Per-consumer executor — prevents one slow consumer starving others
             self._executor = ThreadPoolExecutor(max_workers=10)
 
@@ -373,19 +372,7 @@ class KafkaConsumer(Document):
 
     def _process_message_inner(self, msg):
         message = msg.value().decode('utf-8')
-        max_retries = self._max_retries
-        response = False
-
-        for attempt in range(max_retries + 1):
-            response = self.call_api_endpoint(message)
-            if response:
-                break
-            if attempt < max_retries:
-                logger.warning(
-                    f"Consumer {self.name}: retry {attempt + 1}/{max_retries} "
-                    f"for offset {msg.offset()} partition {msg.partition()}"
-                )
-                time.sleep(2 ** attempt)
+        response = self.call_api_endpoint(message)
 
         if response:
             if self.output_topic and isinstance(response, str):
@@ -401,7 +388,7 @@ class KafkaConsumer(Document):
             self._produce(self._producer, self.failure_topic, message)
             logger.error(
                 f"Consumer {self.name}: message at offset {msg.offset()} "
-                f"forwarded to failure topic '{self.failure_topic}' after {max_retries} retries"
+                f"forwarded to failure topic '{self.failure_topic}'"
             )
             return True  # forwarded — safe to commit
 
