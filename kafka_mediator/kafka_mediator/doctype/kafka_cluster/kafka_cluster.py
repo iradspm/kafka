@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import frappe
+import traceback
 from frappe.model.document import Document
 import confluent_kafka
 from confluent_kafka.admin import AdminClient
@@ -18,19 +19,23 @@ class KafkaCluster(Document):
 			conf = {
 				'bootstrap.servers': self.bootstrap_servers,
 				'security.protocol': self.security_protocol or 'PLAINTEXT',
-				'sasl.mechanisms': self.sasl_mechanism or None,
-				'sasl.username': self.sasl_username or None,
-				'sasl.password': self.sasl_password or None
 			}
+			if self.sasl_mechanism:
+				conf['sasl.mechanisms'] = self.sasl_mechanism
+			if self.sasl_username:
+				conf['sasl.username'] = self.sasl_username
+			if self.sasl_password:
+				conf['sasl.password'] = self.get_password("sasl_password")
+
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			self.status = "Connected"
-			self.topic_count = len(topics.topics)
+			self.topic_count = len([t for t in topics.topics if not t.startswith('__')])
 			logger.info(f"Validated cluster {self.name} with {self.topic_count} topics")
 		except Exception as e:
 			self.status = "Failed"
-			#frappe.log_error(f"Failed to connect to Kafka cluster: {str(e)}")
-			frappe.throw(f"Failed to connect to Kafka cluster: {str(e)}")
+			frappe.log_error("Cluster connection error",f"Failed to connect to Kafka cluster: {traceback.format_exc()}")
+			frappe.throw(f"Failed to connect to Kafka cluster")
 		finally:
 			try:
 				admin_client.close() if 'admin_client' in locals() else None
@@ -38,15 +43,18 @@ class KafkaCluster(Document):
 				pass
 	
 	def after_insert(self):
-        # Sync existing Kafka topics
+		# Sync existing Kafka topics
 		try:
 			conf = {
 				'bootstrap.servers': self.bootstrap_servers,
 				'security.protocol': self.security_protocol or 'PLAINTEXT',
-				'sasl.mechanisms': self.sasl_mechanism or None,
-				'sasl.username': self.sasl_username or None,
-				'sasl.password': self.sasl_password or None
 			}
+			if self.sasl_mechanism:
+				conf['sasl.mechanisms'] = self.sasl_mechanism
+			if self.sasl_username:
+				conf['sasl.username'] = self.sasl_username
+			if self.sasl_password:
+				conf['sasl.password'] = self.get_password("sasl_password")
 			admin_client = AdminClient(conf)
 			topics = admin_client.list_topics(timeout=10)
 			topic_keys = list(topics.topics.keys())
@@ -94,13 +102,13 @@ class KafkaCluster(Document):
 						logger.info(f"Synced topic {topic_name} with {len(topics.topics[topic_name].partitions)} partitions, replication factor {replication_factors.get(topic_name, 1)}")
 						synced_count += 1
 					except Exception as e:
-						logger.error(f"Failed to sync topic {topic_name}: {str(e)}")
+						logger.error(f"Failed to sync topic {topic_name}", traceback.format_exc())
 						continue
 				else:
 					logger.info(f"Topic {topic_name} already exists, skipping")
 			logger.info(f"Completed sync: {synced_count} topics synced for cluster {self.name}")
 		except Exception as e:
-			frappe.log_error(f"Failed to sync topics for cluster {self.name}: {str(e)}")
+			frappe.log_error(f"Failed to sync topics for cluster {self.name}", {str(e)})
 		finally:
 			try:
 				admin_client.close() if 'admin_client' in locals() else None

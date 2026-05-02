@@ -14,7 +14,8 @@
   "min_lag_threshold",
   "max_consumers",
   "scale_up_cooldown",
-  "scale_down_cooldown"
+  "scale_down_cooldown",
+  "max_retries"
  ],
  "fields": [
   {
@@ -87,6 +88,14 @@
    "fieldtype": "Int",
    "label": "Scale Down Cooldown (Seconds)",
    "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "max_retries",
+   "fieldtype": "Int",
+   "label": "Max Retries",
+   "reqd": 1,
+   "description": "Inline retry attempts before forwarding to failure topic. Keep low (1-2) to avoid blocking thread pool workers."
   }
  ],
  "grid_page_length": 50,

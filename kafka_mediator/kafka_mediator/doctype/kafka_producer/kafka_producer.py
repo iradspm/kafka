@@ -13,56 +13,40 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class KafkaProducer(Document):
-	def validate(self):
-		#No need to validate topic right now as Kafka takes sometime to propage the topic and may not be available.
-		return
-		# cluster = frappe.get_doc("Kafka Cluster", self.cluster)
-		# conf = {
-		# 	'bootstrap.servers': cluster.bootstrap_servers,
-		# 	'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-		# 	'sasl.mechanisms': cluster.sasl_mechanism or None,
-		# 	'sasl.username': cluster.sasl_username or None,
-		# 	'sasl.password': cluster.sasl_password or None
-		# }
-		# try:
-		# 	admin_client = AdminClient(conf)
-		# 	topics = admin_client.list_topics(timeout=10)
-		# 	# if self.topic not in topics.topics:
-		# 	# 	frappe.throw(f"Topic {self.topic} does not exist in Kafka cluster {self.cluster}")
-		# 	logger.info(f"Validated topic {self.topic} for producer {self.name}")
-		# except Exception as e:
-		# 	frappe.log_error(f"Failed to validate topic for producer {self.name}: {str(e)}")
-		# 	frappe.throw(f"Failed to validate topic: {str(e)}")
-		# finally:
-		# 	try:
-		# 		admin_client.close() if 'admin_client' in locals() else None
-		# 	except:
-		# 		pass
+	_producer_cache = {}  # class-level cache: producer_name → Producer instance
 
-	def publish_message(self, message):
+	def validate(self):
+		return
+
+	def _get_producer(self):
+		if self.name in KafkaProducer._producer_cache:
+			return KafkaProducer._producer_cache[self.name]
 		cluster = frappe.get_doc("Kafka Cluster", self.cluster)
 		conf = {
 			'bootstrap.servers': cluster.bootstrap_servers,
 			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-			'sasl.mechanisms': cluster.sasl_mechanism or None,
-			'sasl.username': cluster.sasl_username or None,
-			'sasl.password': cluster.sasl_password or None,
 			'acks': 'all',
-			'retries': 3
+			'enable.idempotence': True,
 		}
-		producer = None
+		if cluster.sasl_mechanism:
+			conf['sasl.mechanisms'] = cluster.sasl_mechanism
+		if cluster.sasl_username:
+			conf['sasl.username'] = cluster.sasl_username
+		if cluster.sasl_password:
+			conf['sasl.password'] = cluster.get_password("sasl_password")
+		producer = Producer(conf)
+		KafkaProducer._producer_cache[self.name] = producer
+		logger.info(f"Producer {self.name} connected to cluster {self.cluster}")
+		return producer
+
+	def publish_message(self, message):
 		try:
-			producer = Producer(conf)
+			producer = self._get_producer()
 			producer.produce(self.topic, value=message.encode('utf-8'))
-			producer.flush(timeout=10)
-			frappe.msgprint(f"Message published to topic {self.topic}")
+			producer.flush(timeout=30)
 			logger.info(f"Message published to {self.topic} by producer {self.name}")
 		except Exception as e:
+			# Evict cached producer on failure so next call reconnects
+			KafkaProducer._producer_cache.pop(self.name, None)
 			frappe.log_error(f"Failed to publish message for producer {self.name}: {str(e)}")
 			frappe.throw(f"Failed to publish message: {str(e)}")
-		finally:
-			try:
-				if producer:
-					producer.flush()
-			except:
-				pass

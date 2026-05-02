@@ -3,165 +3,464 @@
 
 import frappe
 from frappe.model.document import Document
-import confluent_kafka
-from confluent_kafka import  Consumer, Producer
+from confluent_kafka import Consumer, Producer, TopicPartition
 from confluent_kafka.admin import AdminClient
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import logging
-import uuid
 import base64
 import time
-import requests, json
+import jwt
+import requests
+import json
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+HEARTBEAT_INTERVAL = 30  # seconds between heartbeat DB writes
+
+
 class KafkaConsumer(Document):
-	def validate(self):
-		cluster = frappe.get_doc("Kafka Cluster", self.cluster)
-		conf = {
-			'bootstrap.servers': cluster.bootstrap_servers,
-			'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-			'sasl.mechanisms': cluster.sasl_mechanism or None,
-			'sasl.username': cluster.sasl_username or None,
-			'sasl.password': cluster.sasl_password or None
+    def validate(self):
+        if not self.consumer_group:
+            frappe.throw(
+                "Consumer Group is required. All consumers for the same topic "
+                "must share the same consumer_group value to enable parallel scaling."
+            )
 
-		}
-		try:
-			admin_client = AdminClient(conf)
-			topics = admin_client.list_topics(timeout=10)
-			if self.topic not in topics.topics:
-				frappe.throw(f"Topic {self.topic} does not exist in Kafka cluster {self.cluster}")
-			logger.info(f"Validated topic {self.topic} for consumer {self.name}")
-		except Exception as e:
-			frappe.log_error(f"Failed to validate topic for consumer {self.name}: {str(e)}")
-			frappe.throw(f"Failed to validate topic: {str(e)}")
-		finally:
-			try:
-				admin_client.close() if 'admin_client' in locals() else None
-			except:
-				pass
+        cluster = frappe.get_doc("Kafka Cluster", self.cluster)
+        conf = {
+            'bootstrap.servers': cluster.bootstrap_servers,
+            'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+        }
+        if cluster.sasl_mechanism:
+            conf['sasl.mechanisms'] = cluster.sasl_mechanism
+        if cluster.sasl_username:
+            conf['sasl.username'] = cluster.sasl_username
+        if cluster.sasl_password:
+            sasl_password = cluster.get_password("sasl_password")
+            if not sasl_password:
+                frappe.throw(f"Password not found for Kafka Cluster {self.cluster} sasl_password. Re-save the cluster doc to store it.")
+            conf['sasl.password'] = sasl_password
+        try:
+            admin_client = AdminClient(conf)
+            topics = admin_client.list_topics(timeout=10)
+            if self.topic not in topics.topics:
+                frappe.throw(f"Topic {self.topic} does not exist in Kafka cluster {self.cluster}")
+            logger.info(f"Validated topic {self.topic} for consumer {self.name}")
+        except frappe.ValidationError:
+            raise
+        except Exception as e:
+            frappe.log_error(f"Failed to validate topic for consumer {self.name}: {str(e)}")
+            frappe.throw(f"Failed to validate topic: {str(e)}")
+        finally:
+            try:
+                admin_client.close() if 'admin_client' in locals() else None
+            except Exception:
+                pass
 
-	def after_insert(self):
-		try:
-			site = frappe.local.site
-			threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
-			logger.info(f"Consumer {self.name} thread started for topic {self.topic}")
-		except Exception as e:
-			frappe.log_error(f"Failed to start consumer thread {self.name}: {str(e)}")
-			frappe.throw(f"Failed to start consumer thread: {str(e)}")
+    def after_insert(self):
+        try:
+            site = frappe.local.site
+            threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
+            logger.info(f"Consumer {self.name} thread started for topic {self.topic}")
+        except Exception as e:
+            frappe.log_error(f"Failed to start consumer thread {self.name}: {str(e)}")
+            frappe.throw(f"Failed to start consumer thread: {str(e)}")
 
-	def restart_consumer_thread(self):
-		"""Manually restart consumer thread when enabled."""
-		try:
-			site = frappe.local.site
-			threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
-			logger.info(f"Consumer {self.name} thread restarted for topic {self.topic}")
-		except Exception as e:
-			frappe.log_error(f"Failed to restart consumer thread {self.name}: {str(e)}")
+    RESTART_ON_CHANGE = {
+        "api_endpoint", "api_username", "api_password",
+        "api_consumer_key", "api_consumer_secret", "api_key",
+        "output_topic", "failure_topic", "topic", "cluster"
+    }
 
-	def consume_messages(self, site):
-		try:
-			frappe.init(site=site)
-			frappe.connect()
-			cluster = frappe.get_doc("Kafka Cluster", self.cluster)
-			conf = {
-				'bootstrap.servers': cluster.bootstrap_servers,
-				'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-				'sasl.mechanisms': cluster.sasl_mechanism or None,
-				'sasl.username': cluster.sasl_username or None,
-				'sasl.password': cluster.sasl_password or None,
-				'group.id': self.consumer_group or str(uuid.uuid4()),
-				'auto.offset.reset': 'earliest',
-				'enable.auto.commit': False
-			}
-			consumer = None
-			try:
-				consumer = Consumer(conf)
-				consumer.subscribe([self.topic])
-				logger.info(f"Consumer {self.name} initialized and subscribed to topic {self.topic}")
-				while self.enabled:
-					try:
-						msg = consumer.poll(1.0)
-						if msg is None:
-							continue
-						if msg.error():
-							frappe.log_error(f"Consumer {self.name} error: {msg.error()}")
-							continue
-						message = msg.value().decode('utf-8')
-						response = self.call_api_endpoint(message)
-						if response and self.output_topic:
-							producer_conf = {
-								'bootstrap.servers': cluster.bootstrap_servers,
-								'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-								'sasl.mechanisms': cluster.sasl_mechanism or None,
-								'sasl.username': cluster.sasl_username or None,
-								'sasl.password': cluster.sasl_password or None,
-								'acks': 'all',
-								'retries': 3
-							}
-							producer = Producer(producer_conf)
-							try:
-								producer.produce(self.output_topic, value=response.encode('utf-8'))
-								producer.flush(timeout=10)
-								logger.info(f"Response published to {self.output_topic} by consumer {self.name}")
-							finally:
-								producer.flush()
-						elif not response and self.failure_topic:
-							producer_conf = {
-								'bootstrap.servers': cluster.bootstrap_servers,
-								'security.protocol': cluster.security_protocol or 'PLAINTEXT',
-								'sasl.mechanisms': cluster.sasl_mechanism or None,
-								'sasl.username': cluster.sasl_username or None,
-								'sasl.password': cluster.sasl_password or None,
-								'acks': 'all',
-								'retries': 3
-							}
-							producer = Producer(producer_conf)
-							try:
-								error_message = json.dumps({"message": message, "error": "API call failed"})
-								producer.produce(self.failure_topic, value=error_message.encode('utf-8'))
-								producer.flush(timeout=10)
-								logger.info(f"Failed message published to {self.failure_topic} by consumer {self.name}")
-							finally:
-								producer.flush()
-						consumer.commit()
-					except Exception as e:
-						frappe.log_error(f"Consumer {self.name} processing failed: {str(e)}")
-						time.sleep(5)
-			except Exception as e:
-				frappe.log_error(f"Failed to initialize consumer {self.name}: {str(e)}")
-			finally:
-				try:
-					if consumer:
-						consumer.close()
-				except:
-					pass
-		except Exception as e:
-			logger.error(f"Failed to initialize Frappe context for consumer {self.name}: {str(e)}")
-		finally:
-			try:
-				frappe.destroy()
-			except:
-				pass
+    SYNC_ACROSS_GROUP = {"failure_topic"}
 
-	def call_api_endpoint(self, message):
-		try:
-			headers = {'Content-Type': 'application/json'}
-			if self.api_username and self.api_password:
-				auth_str = f"{self.api_username}:{self.api_password}"
-				headers['Authorization'] = f"Basic {base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')}"
-			elif self.api_key:
-				headers['Authorization'] = f"Bearer {self.api_key}"
+    def on_update(self):
+        """
+        If any config field that the running thread reads from self.* has changed,
+        restart the thread so it picks up the new values.
+        Toggling `enabled` is handled separately — don't restart a disabled consumer.
+        """
+        if not self.enabled:
+            return
 
-			response = requests.post(self.api_endpoint, data=json.dumps({'message': message}), headers=headers, timeout=10)
-			if response.status_code == 200:
-				logger.info(f"API call successful for consumer {self.name}")
-				return response.text
-			else:
-				frappe.log_error(f"API call failed for consumer {self.name}: {response.status_code}")
-				return None
-		except Exception as e:
-			frappe.log_error(f"API call failed for consumer {self.name}: {str(e)}")
-			return None
+        # Skip on insert — after_insert already started the thread.
+        # get_doc_before_save() is None on first insert, meaning has_value_changed()
+        # returns True for every field and would trigger a spurious restart.
+        if not self.get_doc_before_save():
+            return
+
+        changed = {
+            field for field in self.RESTART_ON_CHANGE
+            if self.has_value_changed(field)
+        }
+
+        # Propagate group-wide fields to all peers silently (no restart needed on peers
+        # — their running threads read these values fresh per message via self.*)
+        group_changed = changed & self.SYNC_ACROSS_GROUP
+        if group_changed:
+            peers = frappe.get_all(
+                "Kafka Consumer",
+                filters={"consumer_group": self.consumer_group, "name": ["!=", self.name]},
+                pluck="name",
+            )
+            update_vals = {f: self.get(f) for f in group_changed}
+            for peer in peers:
+                frappe.db.set_value("Kafka Consumer", peer, update_vals)
+            if peers:
+                frappe.db.commit()
+                logger.info(
+                    f"Consumer {self.name}: synced {group_changed} to "
+                    f"{len(peers)} peer(s) in group '{self.consumer_group}'"
+                )
+
+        if not changed:
+            return
+
+        thread_status = frappe.db.get_value("Kafka Consumer", self.name, "thread_status")
+        logger.info(
+            f"Consumer {self.name}: config fields changed {changed}, "
+            f"current thread_status={thread_status} — restarting thread."
+        )
+
+        # Signal the running thread to stop, then schedule a restart in a daemon
+        # thread so the web worker is not blocked waiting for the old thread to drain.
+        frappe.db.set_value("Kafka Consumer", self.name, "enabled", 0)
+        frappe.db.commit()
+
+        consumer_name = self.name
+        site = frappe.local.site
+
+        def _restart():
+            import frappe as _frappe
+            _frappe.init(site=site)
+            _frappe.connect()
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    status = _frappe.db.get_value("Kafka Consumer", consumer_name, "thread_status")
+                    if status in ("stopped", "error", None):
+                        break
+                    time.sleep(0.5)
+                _frappe.db.set_value("Kafka Consumer", consumer_name, "enabled", 1)
+                _frappe.db.commit()
+                fresh = _frappe.get_doc("Kafka Consumer", consumer_name)
+                fresh.restart_consumer_thread()
+            finally:
+                _frappe.destroy()
+
+        threading.Thread(target=_restart, daemon=True).start()
+
+    def restart_consumer_thread(self):
+        """Restart consumer thread. Only call when the thread is confirmed dead."""
+        try:
+            site = frappe.local.site
+            threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
+            logger.info(f"Consumer {self.name} thread restarted for topic {self.topic}")
+        except Exception as e:
+            frappe.log_error(f"Failed to restart consumer thread {self.name}: {str(e)}")
+
+    def consume_messages(self, site):
+        self._site = site  # worker threads need this to init their own DB connection
+        try:
+            frappe.init(site=site)
+            frappe.connect()
+            cluster = frappe.get_doc("Kafka Cluster", self.cluster)
+            # Shared connection settings — valid for both Producer and Consumer
+            base_conf = {
+                'bootstrap.servers': cluster.bootstrap_servers,
+                'security.protocol': cluster.security_protocol or 'PLAINTEXT',
+            }
+            if cluster.sasl_mechanism:
+                base_conf['sasl.mechanisms'] = cluster.sasl_mechanism
+            if cluster.sasl_username:
+                base_conf['sasl.username'] = cluster.sasl_username
+            if cluster.sasl_password:
+                sasl_password = cluster.get_password("sasl_password")
+                if not sasl_password:
+                    frappe.throw(f"Password not found for Kafka Cluster {self.cluster} sasl_password. Re-save the cluster doc to store it.")
+                base_conf['sasl.password'] = sasl_password
+
+            producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
+            self._producer = producer
+            # Per-consumer executor — prevents one slow consumer starving others
+            self._executor = ThreadPoolExecutor(max_workers=10)
+
+            # Mark thread as running
+            frappe.db.set_value("Kafka Consumer", self.name, {
+                "thread_status": "running",
+                "last_heartbeat": frappe.utils.now(),
+                "last_error": None
+            })
+            frappe.db.commit()
+
+            # Consumer config — consumer-only keys added on top of base_conf
+            conf = {
+                **base_conf,
+                'group.id': self.consumer_group,
+                'auto.offset.reset': 'earliest',
+                'enable.auto.commit': False,
+                'group.instance.id': self.name,
+                'session.timeout.ms': 60000,
+                'heartbeat.interval.ms': 15000,
+                'max.poll.interval.ms': 300000,
+            }
+
+            consumer = None
+            last_heartbeat_tick = time.monotonic()
+
+            try:
+                consumer = Consumer(conf)
+                consumer.subscribe(
+                    [self.topic],
+                    on_assign=self._on_partition_assign,
+                    on_revoke=self._on_partition_revoke
+                )
+
+                logger.info(
+                    f"Consumer {self.name} subscribed to topic {self.topic} "
+                    f"(instance_id={self.name})"
+                )
+
+                while frappe.db.get_value("Kafka Consumer", self.name, "enabled"):
+                    try:
+                        # DB heartbeat
+                        now = time.monotonic()
+                        if now - last_heartbeat_tick > HEARTBEAT_INTERVAL:
+                            frappe.db.set_value(
+                                "Kafka Consumer", self.name,
+                                "last_heartbeat", frappe.utils.now()
+                            )
+                            frappe.db.commit()
+                            last_heartbeat_tick = now
+
+                        # Drain up to 50 messages in one shot
+                        msgs = consumer.consume(num_messages=50, timeout=1.0)
+                        if not msgs:
+                            continue
+
+                        valid_msgs = []
+                        for msg in msgs:
+                            if msg.error():
+                                frappe.log_error(f"Consumer {self.name} Kafka error: {msg.error()}")
+                            else:
+                                valid_msgs.append(msg)
+
+                        if not valid_msgs:
+                            continue
+
+                        # Submit all messages to the executor concurrently
+                        futures = {
+                            self._executor.submit(self._process_message, msg): msg
+                            for msg in valid_msgs
+                        }
+
+                        # Wait for all, keep Kafka heartbeat alive while waiting
+                        results = []  # list of (msg, should_commit bool)
+                        pending = set(futures)
+                        while pending:
+                            consumer.poll(0)
+                            done = {f for f in pending if f.done()}
+                            pending -= done
+
+                            for future in done:
+                                msg = futures[future]
+                                try:
+                                    results.append((msg, future.result()))
+                                except Exception as e:
+                                    frappe.log_error(
+                                        f"Consumer {self.name}: unhandled error for "
+                                        f"offset {msg.offset()}: {str(e)}"
+                                    )
+                                    results.append((msg, False))
+
+                            if pending:
+                                time.sleep(0.05)
+
+                        # Commit only offsets that were successfully handled (success or DLQ).
+                        # Messages that returned False have no failure_topic and must be redelivered.
+                        offsets_to_commit = [
+                            TopicPartition(msg.topic(), msg.partition(), msg.offset() + 1)
+                            for msg, ok in results if ok
+                        ]
+                        skipped = len([m for m, ok in results if not ok])
+
+                        if offsets_to_commit:
+                            consumer.commit(offsets=offsets_to_commit)
+                            logger.info(
+                                f"Consumer {self.name}: committed {len(offsets_to_commit)} "
+                                f"offsets, {skipped} left uncommitted for redelivery"
+                            )
+                        elif skipped:
+                            logger.warning(
+                                f"Consumer {self.name}: {skipped} messages uncommitted — "
+                                "will be redelivered on next poll"
+                            )
+
+                    except Exception as e:
+                        err_str = str(e)
+                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str)
+                        frappe.db.commit()
+
+                        frappe.log_error(f"Consumer {self.name} processing error: {err_str}")
+
+                        backoff_end = time.monotonic() + 5
+                        while time.monotonic() < backoff_end:
+                            consumer.poll(0)
+                            time.sleep(0.1)
+
+                logger.info(f"Consumer {self.name}: shutting down cleanly.")
+
+                try:
+                    consumer.commit()
+                except Exception:
+                    pass
+
+            except Exception as e:
+                frappe.log_error(
+                    f"Consumer {self.name}: failed to initialise Kafka consumer: {str(e)}"
+                )
+                raise
+
+            finally:
+                try:
+                    if consumer:
+                        consumer.close()
+                        logger.info(f"Consumer {self.name}: Kafka consumer closed.")
+                except Exception:
+                    pass
+                try:
+                    producer.flush()
+                except Exception:
+                    pass
+                try:
+                    self._executor.shutdown(wait=False)
+                except Exception:
+                    pass
+
+            frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped")
+            frappe.db.commit()
+
+        except Exception as e:
+            try:
+                frappe.db.set_value("Kafka Consumer", self.name, {
+                    "thread_status": "error",
+                    "last_error": str(e)[:500]
+                })
+                frappe.db.commit()
+            except Exception:
+                pass
+
+            logger.error(f"Consumer {self.name} thread fatal error: {str(e)}")
+
+        finally:
+            try:
+                frappe.destroy()
+            except Exception:
+                pass
+
+    def _process_message(self, msg):
+        """Called in a thread-pool worker. Handles retry + produce/DLQ for one message.
+        Returns True if the offset should be committed, False if it should be redelivered."""
+        frappe.init(site=self._site)
+        frappe.connect()
+        try:
+            return self._process_message_inner(msg)
+        finally:
+            frappe.destroy()
+
+    def _process_message_inner(self, msg):
+        message = msg.value().decode('utf-8')
+        response = self.call_api_endpoint(message)
+
+        if response:
+            if self.output_topic and isinstance(response, str):
+                self._produce(self._producer, self.output_topic, response)
+            logger.info(
+                f"Consumer {self.name}: processed offset {msg.offset()} "
+                f"partition {msg.partition()}"
+            )
+            return True
+
+        if self.failure_topic:
+            # Always forward original payload — failure topic consumer processes it identically
+            self._produce(self._producer, self.failure_topic, message)
+            logger.error(
+                f"Consumer {self.name}: message at offset {msg.offset()} "
+                f"forwarded to failure topic '{self.failure_topic}'"
+            )
+            return True  # forwarded — safe to commit
+
+        # No failure_topic: leave uncommitted so Kafka redelivers on next poll
+        frappe.log_error(
+            f"Consumer {self.name}: no failure_topic set, leaving offset {msg.offset()} "
+            f"partition {msg.partition()} uncommitted for redelivery"
+        )
+        return False
+
+    def _produce(self, producer, topic, value):
+        try:
+            if not isinstance(value, str):
+                value = json.dumps(value)
+            producer.produce(topic, value=value.encode('utf-8'))
+            producer.poll(0)
+        except Exception as e:
+            frappe.log_error(f"Producer error: {str(e)}")
+
+    def _on_partition_assign(self, consumer, partitions):
+        assigned = [f"{p.topic}[{p.partition}]" for p in partitions]
+        logger.info(f"Consumer {self.name} assigned partitions: {assigned}")
+        try:
+            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", json.dumps(assigned))
+            frappe.db.commit()
+        except Exception:
+            pass
+
+    def _on_partition_revoke(self, consumer, partitions):
+        revoked = [f"{p.topic}[{p.partition}]" for p in partitions]
+        logger.info(f"Consumer {self.name} partitions revoked: {revoked}")
+        try:
+            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", "[]")
+            frappe.db.commit()
+        except Exception:
+            pass
+
+    def call_api_endpoint(self, message):
+        try:
+            headers = {'Content-Type': 'application/json'}
+            if self.api_username and self.api_password:
+                auth_str = f"{self.api_username}:{self.get_password('api_password')}"
+                headers['Authorization'] = f"Basic {base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')}"
+
+            elif self.api_consumer_key and self.api_consumer_secret:
+                cons_key = self.get_password("api_consumer_key")
+                cons_secret = self.get_password("api_consumer_secret")
+                token = self.generate_hie_auth_token(consumer_key=cons_key, consumer_secret=cons_secret)
+                headers['Authorization'] = f"Bearer {token}"
+
+            elif self.api_key:
+                headers['Authorization'] = f"Bearer {self.api_key}"
+
+            response = requests.post(
+                self.api_endpoint,
+                data=message.encode("utf-8"),
+                headers=headers,
+                timeout=10
+            )
+            response_status = response.status_code
+            if response_status in [200, 201, 202]:
+                logger.info(f"API call successful for consumer {self.name}: {self.api_endpoint} {response_status}")
+                return response.text if response.text else True
+            return False
+        except requests.exceptions.Timeout:
+            logger.info(f"API call failed for consumer {self.name} - Timeout")
+            return False
+        except Exception as e:
+            logger.info(f"API call failed for consumer {self.name} - {str(e)}")
+            return False
+
+    def generate_hie_auth_token(self, consumer_key, consumer_secret):
+        now = int(time.time())
+        payload = {"key": consumer_key, "iat": now, "exp": now + 3600}
+        return jwt.encode(payload, consumer_secret, algorithm="HS256", headers={"alg": "HS256", "typ": "JWT"})

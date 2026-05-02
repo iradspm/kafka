@@ -168,7 +168,23 @@ app_license = "mit"
 
 scheduler_events = {
     "cron": {
-        "*/5 * * * *" : ["kafka_mediator.kafka_mediator.doctype.kafka_cluster.kafka_cluster.monitor_kafka_metrics"]
+        # Topic stats first — cluster stats aggregate from topic stats written in this pass
+        "*/5 * * * *": [
+            "kafka_mediator.monitor_kafka_metrics",
+            "kafka_mediator.update_topic_stats",
+        ],
+        # Cluster stats run one minute later so topic stats are always fresh
+        "1-56/5 * * * *": [
+            "kafka_mediator.update_cluster_stats",
+        ],
+        # Dead consumer watchdog — restart stale threads every minute
+        "* * * * *": [
+            "kafka_mediator.restart_dead_consumers",
+        ],
+        # Clean up excess disabled consumer docs every 30 min
+        "*/30 * * * *": [
+            "kafka_mediator.cleanup_orphaned_consumers",
+        ],
     }
 }
 
