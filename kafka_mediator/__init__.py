@@ -28,7 +28,9 @@ def _build_cluster_conf(cluster, group_id=None):
         conf['sasl.mechanisms'] = cluster.sasl_mechanism
     if cluster.sasl_username:
         conf['sasl.username'] = cluster.sasl_username
-    sasl_password = cluster.get_password("sasl_password")
+    sasl_password = frappe.utils.password.get_decrypted_password(
+        "Kafka Cluster", cluster.name, "sasl_password", raise_exception=False
+    )
     if sasl_password:
         conf['sasl.password'] = sasl_password
     if group_id:
