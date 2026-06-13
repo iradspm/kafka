@@ -1,5 +1,9 @@
+import traceback
+
 import frappe
 import json
+import uuid
+from datetime import datetime, timezone
 
 from kafka_mediator import (
     get_default_settings,
@@ -60,6 +64,19 @@ def create_topic(**kwargs):
             message = f"Failed to create topic: {topic_name} - {str(e)}"
         )
 
+def wrap_message(agent=None, bundle_id=None, source=None, resource=None):
+    return {
+        "meta": {
+            "event": "bundle_received",
+            "source": source or "kafka-mediator",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "traceId": uuid.uuid4().hex[:10],
+            "agentId": agent,
+            "bundleId": bundle_id,
+            "version": "v1"
+        },
+        "resource": resource
+    }
 
 @frappe.whitelist()
 @validate_payload("topic_name", "message")
@@ -71,39 +88,58 @@ def produce_message(**kwargs):
     topic_name = payload.get("topic_name").strip().lower()
     message = payload.get("message")
 
-    # Accept dict/list passed as JSON object, or a JSON string
-    if isinstance(message, (dict, list)):
-        message = json.dumps(message)
-    elif isinstance(message, str):
+    # Wrap any FHIR resource with metadata for downstream processing
+    agent = frappe.request.headers.get("X-HIE-AGENT", "")
+    source = frappe.request.headers.get("X-HIE-SOURCE", "kafka-mediator")
+
+    # Normalise message to a dict if it arrived as a JSON string
+    if isinstance(message, str):
         try:
-            json.loads(message)  # validate it's proper JSON if string
+            message = json.loads(message)
         except (ValueError, TypeError):
-            pass  # plain string messages are also allowed
+            pass
+
+    if isinstance(message, dict) and message.get("resourceType"):
+        bundle_id = message.get("id", None)
+        if message.get("resourceType") == "Bundle" and not bundle_id:
+            return format_response(
+                status_code=400,
+                message="Bundle.id is required in the payload when resourceType is Bundle"
+            )
+        message = json.dumps(wrap_message(agent=agent, bundle_id=bundle_id, source=source, resource=message))
+    else:
+        if isinstance(message, (dict, list)):
+            message = json.dumps(message)
 
     producer_name = frappe.db.get_value("Kafka Producer", {"topic": topic_name}, "name")
     if not producer_name:
+        frappe.log_error("Producer Configuration Error", f"No producer configured for topic: {topic_name}")
         return format_response(
             status_code = 404,
-            message = f"No producer found for topic: {topic_name}"
+            message = "Missing key configuration. Kindly contact support for assistance."
         )
 
     try:
         producer = frappe.get_doc("Kafka Producer", producer_name)
         producer.publish_message(message)
 
-        return format_response(
-            status_code = 200,
-            message = "Message published successfully",
-            data = dict(
-                topic_name = topic_name,
-                producer_id = producer_name
+        if bundle_id:
+            return format_response(
+                status_code=202,
+                message="Bundle received and queued for processing. Please use the bundle resource ids to track processing status.",
+                data={"mediator_id": bundle_id}
             )
+
+        return format_response(
+            status_code=200,
+            message="Message received and queued for processing."
         )
 
-    except Exception as e:
+    except Exception:
+        frappe.log_error("Failed to publish message", f"Failed to publish message to topic: {topic_name}. {traceback.format_exc()}")
         return format_response(
             status_code = 500,
-            message = f"Failed to produce message to {topic_name}: {str(e)}"
+            message = "Unexpected error occurred. Please try again later.",
         )
 
 

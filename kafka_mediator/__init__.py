@@ -689,7 +689,6 @@ def format_response(success=False, message=None, status_code=200, data=None, pag
     }
     frappe.local.response.update(response_data)
 
-
 def validate_payload(*required_fields):
     def decorator(fn):
         @wraps(fn)
@@ -698,7 +697,7 @@ def validate_payload(*required_fields):
             if missing:
                 return format_response(
                     status_code=400,
-                    message=f"Missing required fields: {', '.join(missing)}"
+                    message="Missing required fields"
                 )
             return fn(**kwargs)
         return wrapper
