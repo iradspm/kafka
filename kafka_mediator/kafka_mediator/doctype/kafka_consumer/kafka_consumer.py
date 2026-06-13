@@ -54,10 +54,7 @@ class KafkaConsumer(Document):
             frappe.log_error(f"Failed to validate topic for consumer {self.name}: {str(e)}")
             frappe.throw(f"Failed to validate topic: {str(e)}")
         finally:
-            try:
-                admin_client.close() if 'admin_client' in locals() else None
-            except Exception:
-                pass
+            pass  # AdminClient has no close()
 
     def after_insert(self):
         try:
