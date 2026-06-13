@@ -92,6 +92,8 @@ def produce_message(**kwargs):
     agent = frappe.request.headers.get("X-HIE-AGENT", "")
     source = frappe.request.headers.get("X-HIE-SOURCE", "kafka-mediator")
 
+    bundle_id = None
+
     # Normalise message to a dict if it arrived as a JSON string
     if isinstance(message, str):
         try:
