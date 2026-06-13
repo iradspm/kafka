@@ -177,9 +177,13 @@ scheduler_events = {
         "1-56/5 * * * *": [
             "kafka_mediator.update_cluster_stats",
         ],
-        # Dead consumer watchdog — restart stale threads every minute
+        # Dead consumer watchdog — cheap DB-only stale-heartbeat check, every minute
         "* * * * *": [
             "kafka_mediator.restart_dead_consumers",
+        ],
+        # Kafka-native lag+membership heal — broker round-trips, every 5 minutes
+        "*/5 * * * *": [
+            "kafka_mediator.heal_lagging_groups",
         ],
         # Clean up excess disabled consumer docs every 30 min
         "*/30 * * * *": [

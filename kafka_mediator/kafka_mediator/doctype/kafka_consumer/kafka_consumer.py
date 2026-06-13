@@ -199,8 +199,8 @@ class KafkaConsumer(Document):
                 'auto.offset.reset': 'earliest',
                 'enable.auto.commit': False,
                 'group.instance.id': self.name,
-                'session.timeout.ms': 60000,
-                'heartbeat.interval.ms': 15000,
+                'session.timeout.ms': 30000,   # matches HEARTBEAT_INTERVAL — dead member evicted in 30s
+                'heartbeat.interval.ms': 3000,  # Kafka default; 1/10 of session timeout
                 'max.poll.interval.ms': 300000,
             }
 

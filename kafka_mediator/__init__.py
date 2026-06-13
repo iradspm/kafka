@@ -13,7 +13,7 @@ from confluent_kafka.admin import AdminClient, _ConsumerGroupTopicPartitions
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-HEARTBEAT_STALE_SECONDS = 120
+HEARTBEAT_STALE_SECONDS = 45
 
 
 def get_default_settings():
@@ -45,10 +45,12 @@ def _build_cluster_conf(cluster, group_id=None):
 # ---------------------------------------------------------------------------
 
 def restart_dead_consumers():
+    """
+    Phase 1 — cheap DB-only check. Runs every minute.
+    Detects consumers whose heartbeat has gone stale (thread died without updating status)
+    and restarts them directly in the current process.
+    """
     site = frappe.local.site
-    restarted = set()
-
-    # ── 1. Stale heartbeat (thread died without updating status) ─────────────
     stale_threshold = frappe.utils.add_to_date(
         frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
     )
@@ -67,14 +69,32 @@ def restart_dead_consumers():
             frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting")
             frappe.db.commit()
             threading.Thread(target=consumer_doc.consume_messages, args=(site,), daemon=True).start()
-            restarted.add(entry["name"])
             logger.info(f"Auto-restarted stale consumer {entry['name']}")
         except Exception as e:
             frappe.log_error(f"Failed to auto-restart consumer {entry['name']}: {str(e)}")
 
-    # ── 2. Lag with zero live Kafka members ───────────────────────────────────
-    # For each cluster, fetch live group member counts and group offsets, then
-    # restart any enabled consumer group that has lag but no live Kafka members.
+
+def heal_lagging_groups():
+    """
+    Phase 2 — Kafka broker round-trips. Runs every 5 minutes.
+    Finds consumer groups that have lag but zero live Kafka members (thread died and
+    heartbeat is still fresh enough to fool Phase 1) and restarts their consumer threads.
+    Kept separate from restart_dead_consumers to avoid broker round-trips every minute.
+    """
+    site = frappe.local.site
+    already_restarted = set()
+
+    # Collect names already restarted by Phase 1 in this same scheduler tick
+    stale_threshold = frappe.utils.add_to_date(
+        frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
+    )
+    recently_restarted = frappe.get_all(
+        "Kafka Consumer",
+        filters=[["thread_status", "=", "restarting"]],
+        pluck="name"
+    )
+    already_restarted.update(already_restarted)
+
     clusters = frappe.get_all("Kafka Cluster", fields=["name"])
     for cluster_row in clusters:
         cluster_name = cluster_row["name"]
@@ -87,7 +107,6 @@ def restart_dead_consumers():
 
             admin_client = AdminClient(conf)
 
-            # all groups on this cluster
             cg_result = admin_client.list_consumer_groups().result()
             group_ids = [
                 g.group_id for g in cg_result.valid
@@ -105,7 +124,11 @@ def restart_dead_consumers():
                 except Exception:
                     member_counts[gid] = 0
 
-            # high watermarks via a temporary consumer
+            # only bother fetching watermarks if at least one group has no members
+            empty_groups = [gid for gid in group_ids if member_counts.get(gid, 0) == 0]
+            if not empty_groups:
+                continue
+
             wm_consumer = Consumer(stats_conf)
             try:
                 cluster_meta = wm_consumer.list_topics(timeout=10)
@@ -128,12 +151,7 @@ def restart_dead_consumers():
                 except Exception:
                     pass
 
-            # per-group lag
-            for gid in group_ids:
-                if member_counts.get(gid, 0) > 0:
-                    continue  # group is healthy
-
-                # compute lag from committed offsets
+            for gid in empty_groups:
                 try:
                     offset_futures = admin_client.list_consumer_group_offsets(
                         [_ConsumerGroupTopicPartitions(gid)]
@@ -146,37 +164,37 @@ def restart_dead_consumers():
                         high = high_watermarks.get(tp.topic, {}).get(tp.partition, 0)
                         group_lag += max(0, high - tp.offset)
                 except Exception as e:
-                    logger.error(f"watchdog lag check failed for {gid}: {e}")
+                    logger.error(f"heal_lagging_groups: lag check failed for {gid}: {e}")
                     continue
 
                 if group_lag <= 0:
-                    continue  # no lag, nothing to do
+                    continue
 
-                # restart all enabled consumers in this group
                 consumers = frappe.get_all(
                     "Kafka Consumer",
                     filters={"consumer_group": gid, "enabled": 1},
                     fields=["name"]
                 )
                 for c in consumers:
-                    if c["name"] in restarted:
+                    if c["name"] in already_restarted:
                         continue
                     try:
                         doc = frappe.get_doc("Kafka Consumer", c["name"])
                         frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
                         frappe.db.commit()
                         threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
-                        restarted.add(c["name"])
+                        already_restarted.add(c["name"])
                         logger.info(
-                            f"Auto-restarted {c['name']} (group '{gid}' has lag={group_lag}, members=0)"
+                            f"heal_lagging_groups: restarted {c['name']} "
+                            f"(group '{gid}' lag={group_lag}, members=0)"
                         )
                     except Exception as e:
                         frappe.log_error(
-                            f"Failed to restart {c['name']} for lagging group '{gid}': {e}"
+                            f"heal_lagging_groups: failed to restart {c['name']} for group '{gid}': {e}"
                         )
 
         except Exception as e:
-            frappe.log_error(f"restart_dead_consumers: cluster '{cluster_name}' check failed: {e}")
+            frappe.log_error(f"heal_lagging_groups: cluster '{cluster_name}' check failed: {e}")
 
 
 # ---------------------------------------------------------------------------
