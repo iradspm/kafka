@@ -1,12 +1,14 @@
 __version__ = "0.0.1"
 
-import frappe
-from confluent_kafka import Consumer, TopicPartition, TopicCollection
-from confluent_kafka.admin import AdminClient
+import threading
 import time
 import logging
-import json
 from functools import wraps
+
+import frappe
+from frappe.utils.password import get_decrypted_password
+from confluent_kafka import Consumer, TopicPartition, TopicCollection
+from confluent_kafka.admin import AdminClient, _ConsumerGroupTopicPartitions
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,7 +30,6 @@ def _build_cluster_conf(cluster, group_id=None):
         conf['sasl.mechanisms'] = cluster.sasl_mechanism
     if cluster.sasl_username:
         conf['sasl.username'] = cluster.sasl_username
-    from frappe.utils.password import get_decrypted_password
     sasl_password = get_decrypted_password(
         "Kafka Cluster", cluster.name, "sasl_password", raise_exception=False
     )
@@ -44,6 +45,10 @@ def _build_cluster_conf(cluster, group_id=None):
 # ---------------------------------------------------------------------------
 
 def restart_dead_consumers():
+    site = frappe.local.site
+    restarted = set()
+
+    # ── 1. Stale heartbeat (thread died without updating status) ─────────────
     stale_threshold = frappe.utils.add_to_date(
         frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
     )
@@ -61,10 +66,117 @@ def restart_dead_consumers():
             consumer_doc = frappe.get_doc("Kafka Consumer", entry["name"])
             frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting")
             frappe.db.commit()
-            consumer_doc.restart_consumer_thread()
-            logger.info(f"Auto-restarted dead consumer {entry['name']}")
+            threading.Thread(target=consumer_doc.consume_messages, args=(site,), daemon=True).start()
+            restarted.add(entry["name"])
+            logger.info(f"Auto-restarted stale consumer {entry['name']}")
         except Exception as e:
             frappe.log_error(f"Failed to auto-restart consumer {entry['name']}: {str(e)}")
+
+    # ── 2. Lag with zero live Kafka members ───────────────────────────────────
+    # For each cluster, fetch live group member counts and group offsets, then
+    # restart any enabled consumer group that has lag but no live Kafka members.
+    clusters = frappe.get_all("Kafka Cluster", fields=["name"])
+    for cluster_row in clusters:
+        cluster_name = cluster_row["name"]
+        try:
+            cluster = frappe.get_doc("Kafka Cluster", cluster_name)
+            conf = _build_cluster_conf(cluster)
+            stats_conf = _build_cluster_conf(
+                cluster, group_id=f"kafka_mediator_watchdog_{cluster_name}"
+            )
+
+            admin_client = AdminClient(conf)
+
+            # all groups on this cluster
+            cg_result = admin_client.list_consumer_groups().result()
+            group_ids = [
+                g.group_id for g in cg_result.valid
+                if not g.group_id.startswith("kafka_mediator_")
+            ]
+            if not group_ids:
+                continue
+
+            # live member count per group
+            desc_futures = admin_client.describe_consumer_groups(group_ids)
+            member_counts = {}
+            for gid, fut in desc_futures.items():
+                try:
+                    member_counts[gid] = len(fut.result().members)
+                except Exception:
+                    member_counts[gid] = 0
+
+            # high watermarks via a temporary consumer
+            wm_consumer = Consumer(stats_conf)
+            try:
+                cluster_meta = wm_consumer.list_topics(timeout=10)
+                high_watermarks = {}
+                for topic_name, topic_meta in cluster_meta.topics.items():
+                    if topic_name.startswith("__"):
+                        continue
+                    high_watermarks[topic_name] = {}
+                    for p in topic_meta.partitions:
+                        try:
+                            _, high = wm_consumer.get_watermark_offsets(
+                                TopicPartition(topic_name, p), timeout=5
+                            )
+                            high_watermarks[topic_name][p] = high
+                        except Exception:
+                            high_watermarks[topic_name][p] = 0
+            finally:
+                try:
+                    wm_consumer.close()
+                except Exception:
+                    pass
+
+            # per-group lag
+            for gid in group_ids:
+                if member_counts.get(gid, 0) > 0:
+                    continue  # group is healthy
+
+                # compute lag from committed offsets
+                try:
+                    offset_futures = admin_client.list_consumer_group_offsets(
+                        [_ConsumerGroupTopicPartitions(gid)]
+                    )
+                    result = offset_futures[gid].result()
+                    group_lag = 0
+                    for tp in (result.topic_partitions or []):
+                        if tp.offset is None or tp.offset < 0:
+                            continue
+                        high = high_watermarks.get(tp.topic, {}).get(tp.partition, 0)
+                        group_lag += max(0, high - tp.offset)
+                except Exception as e:
+                    logger.error(f"watchdog lag check failed for {gid}: {e}")
+                    continue
+
+                if group_lag <= 0:
+                    continue  # no lag, nothing to do
+
+                # restart all enabled consumers in this group
+                consumers = frappe.get_all(
+                    "Kafka Consumer",
+                    filters={"consumer_group": gid, "enabled": 1},
+                    fields=["name"]
+                )
+                for c in consumers:
+                    if c["name"] in restarted:
+                        continue
+                    try:
+                        doc = frappe.get_doc("Kafka Consumer", c["name"])
+                        frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
+                        frappe.db.commit()
+                        threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
+                        restarted.add(c["name"])
+                        logger.info(
+                            f"Auto-restarted {c['name']} (group '{gid}' has lag={group_lag}, members=0)"
+                        )
+                    except Exception as e:
+                        frappe.log_error(
+                            f"Failed to restart {c['name']} for lagging group '{gid}': {e}"
+                        )
+
+        except Exception as e:
+            frappe.log_error(f"restart_dead_consumers: cluster '{cluster_name}' check failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +305,6 @@ def check_consumer_lag(conf, topic, group_id, consumer=None):
 
 
 def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
-    import threading
-
     source = frappe.get_doc("Kafka Consumer", consumer_name)
     topic = frappe.get_doc("Kafka Topic", {"topic_name": topic_name})
     settings = frappe.get_doc("Kafka Settings")
@@ -250,7 +360,6 @@ def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
         return
 
     # Decrypt credentials from source consumer once
-    from frappe.utils.password import get_decrypted_password
     api_password = get_decrypted_password(
         "Kafka Consumer", consumer_name, "api_password", raise_exception=False
     )
@@ -413,8 +522,6 @@ def fetch_live_cluster_stats(cluster_name):
         }
       }
     """
-    from confluent_kafka.admin import _ConsumerGroupTopicPartitions
-
     cluster = frappe.get_doc("Kafka Cluster", cluster_name)
     base_conf = _build_cluster_conf(cluster)
     stats_conf = _build_cluster_conf(cluster, group_id=f"kafka_mediator_live_stats_{cluster_name}")

@@ -1,9 +1,12 @@
+import threading
 import traceback
-
-import frappe
 import json
 import uuid
 from datetime import datetime, timezone
+
+import frappe
+from confluent_kafka import Consumer, TopicPartition, TopicCollection
+from confluent_kafka.admin import AdminClient, NewTopic, _ConsumerGroupTopicPartitions
 
 from kafka_mediator import (
     get_default_settings,
@@ -11,6 +14,7 @@ from kafka_mediator import (
     format_response,
     fetch_live_topic_stats,
     fetch_live_cluster_stats,
+    _build_cluster_conf,
 )
 
 @frappe.whitelist()
@@ -152,10 +156,6 @@ def get_topic_stats(**kwargs):
     Live stats for a single topic sourced entirely from Kafka.
     Groups come from Kafka's live group list, not Frappe consumer docs.
     """
-    from confluent_kafka.admin import AdminClient, _ConsumerGroupTopicPartitions
-    from confluent_kafka import Consumer, TopicPartition
-    from kafka_mediator import _build_cluster_conf
-
     payload = kwargs
     payload.pop("cmd", None)
     topic_name = payload.get("topic_name").strip().lower()
@@ -194,7 +194,6 @@ def get_topic_stats(**kwargs):
             # ── replication factor ────────────────────────────────────────────
             replication_factor = topic_row.replication_factor or 1
             try:
-                from confluent_kafka import TopicCollection
                 futures = admin_client.describe_topics(TopicCollection([topic_name]), request_timeout=10)
                 desc = futures[topic_name].result()
                 if desc.partitions:
@@ -501,10 +500,6 @@ def sync_with_kafka(**kwargs):
       - Consumers whose consumer_group is absent from Kafka → force-restart
       - Consumers with enabled=1 and thread_status stopped/error → simple restart
     """
-    from confluent_kafka.admin import AdminClient, NewTopic
-    from kafka_mediator import _build_cluster_conf
-    import threading
-
     recreated_topics = []
     failed_topics = []
     restarted_consumers = []

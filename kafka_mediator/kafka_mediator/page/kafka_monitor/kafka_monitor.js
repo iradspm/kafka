@@ -109,6 +109,12 @@ var KafkaMonitor = {
             var $btn = $(this);
             self._do_scale($btn.data("topic"), $btn.data("group"), parseInt($btn.data("current"), 10));
         });
+
+        $(this.wrapper).on("click", ".km-restart-btn", function (e) {
+            e.stopPropagation();
+            var $btn = $(this);
+            self._do_restart_group($btn.data("topic"), $btn.data("group"), $btn);
+        });
     },
 
     // ── Cluster loading ───────────────────────────────────────────────────────
@@ -325,9 +331,23 @@ var KafkaMonitor = {
                 var pill_cls = { running: "km-pill-green", error: "km-pill-red", restarting: "km-pill-orange" }[st] || "km-pill-grey";
                 var group_lag = g.total_lag || 0;
 
+                var needs_restart = (group_lag > 0 && member_count === 0);
+
                 html += '<div class="km-group-header">';
                 html += '<span class="km-group-label">' + group_name + '</span>';
+                if (needs_restart) {
+                    html += '<span style="background:#fef3c7;color:#92400e;border:1px solid #fbbf24;'
+                         +  'border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;margin-right:6px">'
+                         +  '⚠ No live members</span>';
+                }
                 html += '<span class="km-group-count">' + member_count + ' live member(s)</span>';
+                if (needs_restart) {
+                    html += '<button class="km-btn km-restart-btn"'
+                         +  ' style="background:#f97316;color:#fff;border-color:#ea580c;margin-right:4px"'
+                         +  ' data-topic="' + data.topic_name + '"'
+                         +  ' data-group="' + group_name + '">'
+                         +  'Restart</button>';
+                }
                 html += '<button class="km-btn km-scale-btn"'
                      +  ' data-topic="' + data.topic_name + '"'
                      +  ' data-group="' + group_name + '"'
@@ -461,6 +481,31 @@ var KafkaMonitor = {
             "Scale Consumers — " + topic_name,
             "Scale"
         );
+    },
+
+    _do_restart_group: function (topic_name, consumer_group, $btn) {
+        var self = this;
+        $btn.prop("disabled", true).text("Restarting…");
+        frappe.call({
+            method: "kafka_mediator.api.consumer.restart_consumer_group",
+            args: { topic_name: topic_name, consumer_group: consumer_group },
+            callback: function (r) {
+                $btn.prop("disabled", false).text("Restart");
+                if (!r || r.status_code !== 200) {
+                    frappe.show_alert({ message: (r && r.message) || "Restart failed.", indicator: "red" });
+                    return;
+                }
+                frappe.show_alert({ message: r.message, indicator: "green" });
+                self.refresh();
+                if (self.selected_topic === topic_name) {
+                    self.open_panel(topic_name);
+                }
+            },
+            error: function () {
+                $btn.prop("disabled", false).text("Restart");
+                frappe.show_alert({ message: "Restart request failed.", indicator: "red" });
+            }
+        });
     },
 
     close_panel: function () {
