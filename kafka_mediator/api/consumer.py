@@ -1,9 +1,14 @@
+import threading
+
 import frappe
+from frappe.utils.password import get_decrypted_password
 
 from kafka_mediator import (
     get_default_settings,
     validate_payload,
-    format_response
+    format_response,
+    scale_consumer,
+    scale_down_consumer,
 )
 
 
@@ -243,9 +248,9 @@ def scale_up_consumer(**kwargs):
         ["api_key", "api_username", "max_retries"],
         as_dict=True
     )
-    api_password        = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_password", raise_exception=False)
-    api_consumer_key    = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_consumer_key", raise_exception=False)
-    api_consumer_secret = frappe.utils.password.get_decrypted_password("Kafka Consumer", source_name, "api_consumer_secret", raise_exception=False)
+    api_password        = get_decrypted_password("Kafka Consumer", source_name, "api_password", raise_exception=False)
+    api_consumer_key    = get_decrypted_password("Kafka Consumer", source_name, "api_consumer_key", raise_exception=False)
+    api_consumer_secret = get_decrypted_password("Kafka Consumer", source_name, "api_consumer_secret", raise_exception=False)
 
     try:
         consumer = frappe.get_doc({
@@ -278,3 +283,126 @@ def scale_up_consumer(**kwargs):
         )
     except Exception as e:
         return format_response(status_code=500, message=str(e))
+
+
+@frappe.whitelist()
+@validate_payload("topic_name", "consumer_group")
+def restart_consumer_group(**kwargs):
+    """
+    Restart all enabled consumer threads for a given topic+group in the web process.
+    Called from the monitor when lag > 0 and live member_count == 0.
+    """
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name     = payload.get("topic_name").strip().lower()
+    consumer_group = payload.get("consumer_group").strip()
+
+    consumers = frappe.get_all(
+        "Kafka Consumer",
+        filters={"topic": topic_name, "consumer_group": consumer_group, "enabled": 1},
+        fields=["name"]
+    )
+
+    if not consumers:
+        return format_response(
+            status_code=404,
+            message=f"No enabled consumers for topic '{topic_name}' in group '{consumer_group}'."
+        )
+
+    site = frappe.local.site
+    started = []
+    errors = []
+    for c in consumers:
+        try:
+            doc = frappe.get_doc("Kafka Consumer", c["name"])
+            frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
+            frappe.db.commit()
+            threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
+            started.append(c["name"])
+        except Exception as e:
+            errors.append(f"{c['name']}: {e}")
+
+    if errors and not started:
+        return format_response(status_code=500, message="; ".join(errors))
+
+    return format_response(
+        status_code=200,
+        message=f"Restarted {len(started)} consumer(s) for group '{consumer_group}'.",
+        data={"started": started, "errors": errors}
+    )
+
+
+@frappe.whitelist()
+@validate_payload("topic_name", "consumer_group", "target_count")
+def scale_consumers(**kwargs):
+    """
+    Scale consumers to target_count, running directly in the web process.
+
+    Consumer threads must start in the gunicorn worker, not an RQ fork —
+    daemon threads spawned inside an RQ job die the moment the job completes.
+    """
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name     = payload.get("topic_name").strip().lower()
+    consumer_group = payload.get("consumer_group").strip()
+
+    try:
+        target_count = int(payload.get("target_count"))
+    except (TypeError, ValueError):
+        return format_response(status_code=400, message="target_count must be an integer.")
+
+    settings = get_default_settings()
+    max_consumers = settings.max_consumers or 6
+    if target_count < 1 or target_count > max_consumers:
+        return format_response(
+            status_code=400,
+            message=f"target_count must be between 1 and {max_consumers}."
+        )
+
+    source = frappe.db.get_value(
+        "Kafka Consumer",
+        {"topic": topic_name, "consumer_group": consumer_group, "enabled": 1},
+        "name"
+    )
+    if not source:
+        return format_response(
+            status_code=404,
+            message=f"No active consumers for topic '{topic_name}' in group '{consumer_group}'."
+        )
+
+    current_count = frappe.db.count(
+        "Kafka Consumer",
+        {"topic": topic_name, "consumer_group": consumer_group, "enabled": 1}
+    )
+
+    if target_count == current_count:
+        return format_response(
+            status_code=200,
+            message=f"Already at {current_count} consumer(s). No change needed."
+        )
+
+    try:
+        if target_count > current_count:
+            scale_consumer(source, topic_name, consumer_group, target_count)
+        else:
+            scale_down_consumer(source, topic_name, consumer_group, target_count)
+    except Exception as e:
+        return format_response(status_code=500, message=f"Scaling failed: {str(e)}")
+
+    new_count = frappe.db.count(
+        "Kafka Consumer",
+        {"topic": topic_name, "consumer_group": consumer_group, "enabled": 1}
+    )
+    direction = "up" if target_count > current_count else "down"
+    return format_response(
+        status_code=200,
+        message=f"Scaled {direction} from {current_count} → {new_count} consumer(s).",
+        data={
+            "topic_name":     topic_name,
+            "consumer_group": consumer_group,
+            "from_count":     current_count,
+            "target_count":   new_count,
+        }
+    )

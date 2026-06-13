@@ -39,11 +39,7 @@ class KafkaTopic(Document):
             frappe.log_error(f"Failed to create topic {self.topic_name}: {str(e)}")
             raise frappe.ValidationError(f"Failed to create topic in Kafka: {str(e)}")
         finally:
-            try:
-                if admin_client:
-                    admin_client.close()
-            except Exception:
-                pass
+            pass  # AdminClient has no close()
 
     def increase_partitions(self, new_partitions):
         new_partitions = int(new_partitions)
@@ -88,8 +84,4 @@ class KafkaTopic(Document):
             frappe.log_error(f"Failed to increase partitions for {self.topic_name}: {str(e)}")
             frappe.throw(f"Failed to increase partitions: {str(e)}")
         finally:
-            try:
-                if admin_client:
-                    admin_client.close()
-            except Exception:
-                pass
+            pass  # AdminClient has no close()

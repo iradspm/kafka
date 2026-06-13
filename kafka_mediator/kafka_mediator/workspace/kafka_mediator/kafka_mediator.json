@@ -93,6 +93,12 @@
    "label": "Kafka Settings",
    "link_to": "Kafka Settings",
    "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "label": "Kafka Monitor",
+   "link_to": "kafka-monitor",
+   "type": "Page"
   }
  ],
  "title": "Kafka Mediator"
