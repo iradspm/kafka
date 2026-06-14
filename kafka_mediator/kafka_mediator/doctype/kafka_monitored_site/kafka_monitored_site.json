@@ -1,0 +1,92 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:SITE-MON-{###}",
+ "creation": "2025-06-14 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "site_name",
+  "url",
+  "enabled",
+  "column_break_1",
+  "status",
+  "last_checked",
+  "last_down"
+ ],
+ "fields": [
+  {
+   "fieldname": "site_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Site Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "URL",
+   "reqd": 1,
+   "description": "Base URL e.g. https://mysite.example.com"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Unknown",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "options": "Unknown\nUp\nDown",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_checked",
+   "fieldtype": "Datetime",
+   "label": "Last Checked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_down",
+   "fieldtype": "Datetime",
+   "label": "Last Down",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-06-14 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Kafka Mediator",
+ "name": "Kafka Monitored Site",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

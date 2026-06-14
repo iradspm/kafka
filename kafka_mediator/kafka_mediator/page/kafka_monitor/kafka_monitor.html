@@ -172,6 +172,40 @@
     </div>
   </div>
 
+  <!-- Sites Monitor -->
+  <div class="km-table-card" id="km-sites-card">
+    <div class="km-card-header">
+      <span class="km-card-title">Site Availability</span>
+      <span class="km-badge" id="km-sites-count">0</span>
+      <div style="flex:1"></div>
+      <button class="km-btn" id="km-add-site-btn" style="height:28px;font-size:11px;padding:0 10px">+ Add Site</button>
+      <button class="km-btn km-btn-icon" id="km-sites-refresh-btn" title="Check sites now" style="margin-left:6px">
+        <svg id="km-sites-refresh-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg>
+      </button>
+    </div>
+    <div class="km-table-scroll">
+      <table class="km-table">
+        <thead>
+          <tr>
+            <th>Site</th>
+            <th>URL</th>
+            <th class="text-right">Status</th>
+            <th class="text-right">Response</th>
+            <th class="text-right">Last Checked</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="km-sites-tbody">
+          <tr><td colspan="6" class="km-empty">No sites configured.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Footer -->
   <div class="km-footer">
     <span id="km-last-updated">Never refreshed</span>

@@ -168,11 +168,12 @@ app_license = "mit"
 
 scheduler_events = {
     "cron": {
-        # Topic stats, scaling monitor, and lag healing — all every 5 minutes
+        # Topic stats, scaling monitor, lag healing, and site availability — all every 5 minutes
         "*/5 * * * *": [
             "kafka_mediator.monitor_kafka_metrics",
             "kafka_mediator.update_topic_stats",
             "kafka_mediator.heal_lagging_groups",
+            "kafka_mediator.api.site_monitor.check_sites",
         ],
         # Cluster stats run one minute later so topic stats are always fresh
         "1-56/5 * * * *": [
