@@ -8,7 +8,7 @@ from functools import wraps
 import frappe
 from frappe.utils.password import get_decrypted_password
 from confluent_kafka import Consumer, TopicPartition, TopicCollection
-from confluent_kafka.admin import AdminClient, _ConsumerGroupTopicPartitions
+from confluent_kafka.admin import AdminClient, _ConsumerGroupTopicPartitions, ConfigResource
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -198,6 +198,106 @@ def heal_lagging_groups():
 
 
 # ---------------------------------------------------------------------------
+# SMS alert helper
+# ---------------------------------------------------------------------------
+
+def _send_lag_sms(cluster_name, topic, consumer_group, lag, settings):
+    """
+    Send an SMS to all enabled Kafka Alert Recipients for the given cluster
+    if SMS alerts are enabled, lag exceeds alert_lag_threshold, and the
+    per-cluster cooldown has elapsed.
+    """
+    if not settings.enable_sms_alerts:
+        return
+
+    alert_threshold = settings.alert_lag_threshold or settings.max_lag_threshold or 1000
+    if lag < alert_threshold:
+        return
+
+    cooldown_minutes = settings.sms_alert_cooldown_minutes or 30
+    cooldown_seconds = cooldown_minutes * 60
+
+    # Check cooldown via last_sms_sent on Kafka Cluster Stats
+    last_sms_sent = frappe.db.get_value(
+        "Kafka Cluster Stats", {"cluster": cluster_name}, "last_sms_sent"
+    )
+    if last_sms_sent:
+        elapsed = (frappe.utils.now_datetime() - last_sms_sent).total_seconds()
+        if elapsed < cooldown_seconds:
+            logger.info(
+                f"SMS alert suppressed for cluster '{cluster_name}' — cooldown active "
+                f"({int(elapsed)}s / {cooldown_seconds}s)"
+            )
+            return
+
+    # Fetch recipients: those with matching cluster OR no cluster set
+    recipients = frappe.get_all(
+        "Kafka Alert Recipient",
+        filters=[
+            ["enabled", "=", 1],
+            ["cluster", "in", [cluster_name, "", None]]
+        ],
+        fields=["mobile_no", "full_name"]
+    )
+    if not recipients:
+        return
+
+    template = (settings.sms_alert_template or "").strip() or (
+        "[Kafka Alert] High lag on cluster '{{ cluster_name }}'.\n"
+        "Topic: {{ topic }} | Group: {{ consumer_group }}\n"
+        "Lag: {{ lag }} (threshold: {{ alert_threshold }})"
+    )
+    def _normalize_ke(num):
+        n = (num or "").strip().replace(" ", "").replace("-", "")
+        if n.startswith("0") and len(n) == 10:
+            return "+254" + n[1:]
+        if n.startswith("254") and not n.startswith("+"):
+            return "+" + n
+        return n
+
+    try:
+        from frappe.core.doctype.sms_settings.sms_settings import send_sms
+        sent = 0
+        for r in recipients:
+            if not r.mobile_no:
+                continue
+            context = {
+                "recipient_name": r.full_name or "",
+                "cluster_name": cluster_name,
+                "topic": topic,
+                "consumer_group": consumer_group,
+                "lag": lag,
+                "alert_threshold": alert_threshold,
+            }
+            try:
+                message = frappe.render_template(template, context)
+            except Exception as e:
+                frappe.log_error(f"SMS template render failed for {r.full_name}: {e}")
+                message = (
+                    f"[Kafka Alert] High lag on cluster '{cluster_name}'.\n"
+                    f"Topic: {topic} | Group: {consumer_group}\n"
+                    f"Lag: {lag} (threshold: {alert_threshold})"
+                )
+            send_sms([_normalize_ke(r.mobile_no)], message)
+            sent += 1
+
+        if sent:
+            if frappe.db.exists("Kafka Cluster Stats", {"cluster": cluster_name}):
+                frappe.db.set_value(
+                    "Kafka Cluster Stats", {"cluster": cluster_name},
+                    "last_sms_sent", frappe.utils.now_datetime(),
+                    update_modified=False
+                )
+            frappe.db.commit()
+            logger.info(
+                f"SMS lag alert sent for cluster '{cluster_name}' topic '{topic}' "
+                f"lag={lag} to {sent} recipient(s)"
+            )
+    except Exception as e:
+        frappe.log_error(f"SMS alert failed for cluster '{cluster_name}': {e}")
+
+
+# ---------------------------------------------------------------------------
 # Auto-scaling monitor — called every 5 minutes by scheduler
 # ---------------------------------------------------------------------------
 
@@ -245,6 +345,8 @@ def monitor_kafka_metrics():
             current_consumers = len(frappe.get_all("Kafka Consumer", filters={
                 "topic": consumer.topic, "consumer_group": consumer.consumer_group, "enabled": 1
             }))
+
+            _send_lag_sms(consumer.cluster, consumer.topic, consumer.consumer_group, lag, settings)
 
             if lag >= max_lag_threshold:
                 target_consumers = max(1, min(max_consumers, (lag + messages_per_consumer - 1) // messages_per_consumer))
@@ -582,6 +684,7 @@ def fetch_live_cluster_stats(cluster_name):
                 "replication_factor": 1,
                 "lag_by_group": {},
                 "total_lag": 0,
+                "retention_days": None,
             }
 
         # Replication factors via describe_topics
@@ -599,6 +702,25 @@ def fetch_live_cluster_stats(cluster_name):
                         logger.error(f"Replication factor failed for {topic_name}: {e}")
             except Exception as e:
                 logger.error(f"describe_topics failed: {e}")
+
+        # Retention periods via describe_configs
+        if kafka_topics:
+            try:
+                config_resources = [ConfigResource(ConfigResource.Type.TOPIC, t) for t in kafka_topics]
+                config_futures = admin_client.describe_configs(config_resources)
+                for resource, future in config_futures.items():
+                    try:
+                        cfg = future.result()
+                        raw = cfg.get("retention.ms")
+                        ms = int(raw.value) if raw is not None else -1
+                        topic_stats[resource.name]["retention_days"] = (
+                            None if ms < 0 else round(ms / 86_400_000, 2)
+                        )
+                    except Exception as e:
+                        logger.error(f"describe_configs failed for {resource.name}: {e}")
+                        topic_stats[resource.name]["retention_days"] = None
+            except Exception as e:
+                logger.error(f"describe_configs batch failed: {e}")
 
         # ── 2. All consumer groups from Kafka ─────────────────────────────────
         try:

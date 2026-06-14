@@ -15,7 +15,13 @@
   "max_consumers",
   "scale_up_cooldown",
   "scale_down_cooldown",
-  "max_retries"
+  "max_retries",
+  "sms_alerts_tab",
+  "sms_alerts_section",
+  "enable_sms_alerts",
+  "alert_lag_threshold",
+  "sms_alert_cooldown_minutes",
+  "sms_alert_template"
  ],
  "fields": [
   {
@@ -91,18 +97,59 @@
   },
   {
    "default": "1",
+   "description": "Inline retry attempts before forwarding to failure topic. Keep low (1-2) to avoid blocking thread pool workers.",
    "fieldname": "max_retries",
    "fieldtype": "Int",
    "label": "Max Retries",
-   "reqd": 1,
-   "description": "Inline retry attempts before forwarding to failure topic. Keep low (1-2) to avoid blocking thread pool workers."
+   "reqd": 1
+  },
+  {
+   "fieldname": "sms_alerts_section",
+   "fieldtype": "Section Break",
+   "label": "SMS Alerts"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_sms_alerts",
+   "fieldtype": "Check",
+   "label": "Enable SMS Alerts"
+  },
+  {
+   "default": "1000",
+   "depends_on": "eval:doc.enable_sms_alerts",
+   "description": "Lag value that triggers an SMS alert. Independent of the auto-scaling threshold.",
+   "fieldname": "alert_lag_threshold",
+   "fieldtype": "Int",
+   "label": "Alert Lag Threshold"
+  },
+  {
+   "default": "30",
+   "depends_on": "eval:doc.enable_sms_alerts",
+   "description": "Minimum gap between SMS bursts per cluster to avoid flooding.",
+   "fieldname": "sms_alert_cooldown_minutes",
+   "fieldtype": "Int",
+   "label": "SMS Alert Cooldown (Minutes)"
+  },
+  {
+   "default": "[Kafka Alert] High lag on cluster '{{ cluster_name }}'.\nTopic: {{ topic }} | Group: {{ consumer_group }}\nLag: {{ lag }} (threshold: {{ alert_threshold }})",
+   "depends_on": "eval:doc.enable_sms_alerts",
+   "description": "Available variables: {{ recipient_name }}, {{ cluster_name }}, {{ topic }}, {{ consumer_group }}, {{ lag }}, {{ alert_threshold }}",
+   "fieldname": "sms_alert_template",
+   "fieldtype": "Code",
+   "label": "SMS Alert Template",
+   "options": "Jinja"
+  },
+  {
+   "fieldname": "sms_alerts_tab",
+   "fieldtype": "Tab Break",
+   "label": "SMS ALerts"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-06-20 17:54:22.040487",
+ "modified": "2026-06-14 12:25:17.518702",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Settings",

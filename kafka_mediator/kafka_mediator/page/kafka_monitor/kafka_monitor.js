@@ -104,6 +104,12 @@ var KafkaMonitor = {
             self._toggle_expand($(this).data("target"));
         });
 
+        $(this.wrapper).on("click", ".km-retention-btn", function (e) {
+            e.stopPropagation();
+            var $btn = $(this);
+            self._do_set_retention($btn.data("topic"), $btn.data("current"));
+        });
+
         $(this.wrapper).on("click", ".km-scale-btn", function (e) {
             e.stopPropagation();
             var $btn = $(this);
@@ -200,13 +206,16 @@ var KafkaMonitor = {
         // Table
         var $tbody = this.$("#km-topic-tbody").empty();
         if (!topics.length) {
-            $tbody.html('<tr><td colspan="6" class="km-empty">No topics in this cluster.</td></tr>');
+            $tbody.html('<tr><td colspan="7" class="km-empty">No topics in this cluster.</td></tr>');
         } else {
             topics.forEach(function (t) {
                 var pill = KafkaMonitor._status_pill(t.consumer_groups || []);
                 var lag_class = t.lag > 0 ? "km-lag-warn" : "km-lag-ok";
                 var active_row = (t.topic_name === KafkaMonitor.selected_topic) ? " km-row-active" : "";
                 var group_count = (t.consumer_groups || []).length;
+                var retention_label = (t.retention_days === null || t.retention_days === undefined)
+                    ? '—'
+                    : (t.retention_days < 0 ? '∞' : t.retention_days + 'd');
                 $tbody.append(
                     '<tr class="km-topic-row' + active_row + '" data-topic="' + t.topic_name + '">' +
                     '<td class="km-topic-name" data-full="' + t.topic_name + '">' + t.topic_name + '</td>' +
@@ -214,6 +223,7 @@ var KafkaMonitor = {
                     '<td class="text-right km-num">' + KafkaMonitor.fmt_num(t.message_count || 0) + '</td>' +
                     '<td class="text-right km-num ' + lag_class + '">' + (t.lag || 0) + '</td>' +
                     '<td class="text-right km-num">' + group_count + '</td>' +
+                    '<td class="text-right km-num">' + retention_label + '</td>' +
                     '<td>' + pill + '</td>' +
                     '</tr>'
                 );
@@ -310,11 +320,19 @@ var KafkaMonitor = {
         var lag_class = (data.lag || 0) > 0 ? "km-lag-warn" : "";
         var html = "";
 
+        var retention_label = (data.retention_days === null || data.retention_days === undefined)
+            ? "—"
+            : (data.retention_days < 0 ? "∞ infinite" : data.retention_days + "d");
+
         html += '<div class="km-pstat-grid">';
         html += '<div class="km-pstat"><div class="km-pstat-label">Partitions</div><div class="km-pstat-value">' + (data.partitions || 0) + '</div></div>';
         html += '<div class="km-pstat"><div class="km-pstat-label">Messages</div><div class="km-pstat-value">' + this.fmt_num(data.message_count || 0) + '</div></div>';
         html += '<div class="km-pstat"><div class="km-pstat-label">Total Lag</div><div class="km-pstat-value ' + lag_class + '">' + (data.lag || 0) + '</div></div>';
         html += '<div class="km-pstat"><div class="km-pstat-label">Replication</div><div class="km-pstat-value">' + (data.replication_factor || 0) + '</div></div>';
+        html += '<div class="km-pstat km-pstat-retention" style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;">';
+        html += '<div><div class="km-pstat-label">Retention</div><div class="km-pstat-value" style="font-size:18px">' + retention_label + '</div></div>';
+        html += '<button class="km-btn km-retention-btn" style="font-size:11px;padding:4px 12px;height:28px" data-topic="' + data.topic_name + '" data-current="' + (data.retention_days !== null && data.retention_days !== undefined ? data.retention_days : "") + '">Set</button>';
+        html += '</div>';
         html += '</div>';
 
         html += '<div class="km-section-title">Consumer Groups (' + consumer_groups.length + ')</div>';
@@ -480,6 +498,45 @@ var KafkaMonitor = {
             },
             "Scale Consumers — " + topic_name,
             "Scale"
+        );
+    },
+
+    _do_set_retention: function (topic_name, current_days) {
+        var self = this;
+        var default_val = (current_days !== null && current_days !== undefined && current_days !== "") ? current_days : 7;
+
+        frappe.prompt(
+            [{
+                fieldname: "retention_days",
+                label: "Retention (days)",
+                fieldtype: "Float",
+                default: default_val,
+                description: "Minimum 5 days. Enter -1 for infinite retention.",
+                reqd: 1
+            }],
+            function (values) {
+                var days = parseFloat(values.retention_days);
+                if (isNaN(days) || (days !== -1 && days < 5)) {
+                    frappe.show_alert({ message: "Minimum retention is 5 days (or -1 for infinite).", indicator: "red" });
+                    return;
+                }
+                frappe.call({
+                    method: "kafka_mediator.api.topic.set_topic_retention",
+                    args: { topic_name: topic_name, retention_days: days },
+                    callback: function (r) {
+                        if (!r || r.status_code !== 200) {
+                            frappe.show_alert({ message: (r && r.message) || "Failed to set retention.", indicator: "red" });
+                            return;
+                        }
+                        frappe.show_alert({ message: r.message, indicator: "green" });
+                        if (self.selected_topic === topic_name) {
+                            self.open_panel(topic_name);
+                        }
+                    }
+                });
+            },
+            "Set Retention — " + topic_name,
+            "Apply"
         );
     },
 

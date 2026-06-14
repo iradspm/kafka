@@ -168,10 +168,11 @@ app_license = "mit"
 
 scheduler_events = {
     "cron": {
-        # Topic stats first — cluster stats aggregate from topic stats written in this pass
+        # Topic stats, scaling monitor, and lag healing — all every 5 minutes
         "*/5 * * * *": [
             "kafka_mediator.monitor_kafka_metrics",
             "kafka_mediator.update_topic_stats",
+            "kafka_mediator.heal_lagging_groups",
         ],
         # Cluster stats run one minute later so topic stats are always fresh
         "1-56/5 * * * *": [
@@ -180,10 +181,6 @@ scheduler_events = {
         # Dead consumer watchdog — cheap DB-only stale-heartbeat check, every minute
         "* * * * *": [
             "kafka_mediator.restart_dead_consumers",
-        ],
-        # Kafka-native lag+membership heal — broker round-trips, every 5 minutes
-        "*/5 * * * *": [
-            "kafka_mediator.heal_lagging_groups",
         ],
         # Clean up excess disabled consumer docs every 30 min
         "*/30 * * * *": [
