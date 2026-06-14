@@ -233,11 +233,10 @@ def _send_lag_sms(cluster_name, topic, consumer_group, lag, settings):
     # Fetch recipients: those with matching cluster OR no cluster set
     recipients = frappe.get_all(
         "Kafka Alert Recipient",
-        filters=[
-            ["enabled", "=", 1],
-            ["cluster", "in", [cluster_name, "", None]]
-        ],
-        fields=["mobile_no", "full_name"]
+        filters={"enabled": 1},
+        fields=["mobile_no", "full_name"],
+        limit=0,
+        order_by="creation asc"
     )
     if not recipients:
         return

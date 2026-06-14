@@ -11,7 +11,8 @@ frappe.pages["kafka-monitor"].on_page_load = function (wrapper) {
 
 var KafkaMonitor = {
     cluster: null,
-    countdown: 10,
+    countdown: 60,
+    sites_countdown: 300,
     countdown_timer: null,
     selected_topic: null,
     bar_chart: null,
@@ -105,6 +106,7 @@ var KafkaMonitor = {
         });
 
         $(this.wrapper).on("click", "#km-sites-refresh-btn", function () {
+            self.sites_countdown = 300;
             self.check_sites();
         });
 
@@ -190,6 +192,7 @@ var KafkaMonitor = {
                 }
                 self.last_data = r.data;
                 self.render(r.data);
+                self._auto_restart_lagging(r.data);
                 self._update_footer();
                 if (self.selected_topic) {
                     var updated = (r.data.topics || []).find(function (t) {
@@ -198,6 +201,54 @@ var KafkaMonitor = {
                     if (updated) self.render_panel(updated);
                 }
             }
+        });
+    },
+
+    // ── Auto-restart groups with lag and no live members (after 5 min) ───────
+    _lag_detected_at: {},   // key → timestamp (ms) when bad state was first seen
+    _restarting: {},        // key → bool, in-flight guard
+
+    _auto_restart_lagging: function (data) {
+        var self = this;
+        var now = Date.now();
+        var DELAY_MS = 5 * 60 * 1000;
+        var seen_keys = {};
+
+        (data.topics || []).forEach(function (t) {
+            (t.consumer_groups || []).forEach(function (g) {
+                if ((g.total_lag || 0) > 0 && (g.member_count || 0) === 0) {
+                    var key = t.topic_name + "|" + (g.consumer_group || "");
+                    seen_keys[key] = true;
+
+                    if (!self._lag_detected_at[key]) {
+                        self._lag_detected_at[key] = now;   // start the clock
+                    }
+
+                    var elapsed = now - self._lag_detected_at[key];
+                    if (elapsed < DELAY_MS || self._restarting[key]) return;
+
+                    self._restarting[key] = true;
+                    frappe.call({
+                        method: "kafka_mediator.api.consumer.restart_consumer_group",
+                        args: { topic_name: t.topic_name, consumer_group: g.consumer_group },
+                        callback: function (r) {
+                            delete self._restarting[key];
+                            delete self._lag_detected_at[key];  // reset clock after restart
+                            if (r && r.status_code === 200) {
+                                frappe.show_alert({ message: "Auto-restarted: " + (g.consumer_group || "") + " on " + t.topic_name, indicator: "orange" });
+                            }
+                        },
+                        error: function () {
+                            delete self._restarting[key];
+                        }
+                    });
+                }
+            });
+        });
+
+        // Clear clock for groups that recovered on their own
+        Object.keys(self._lag_detected_at).forEach(function (key) {
+            if (!seen_keys[key]) delete self._lag_detected_at[key];
         });
     },
 
@@ -600,14 +651,23 @@ var KafkaMonitor = {
             self.countdown--;
             self.$("#km-countdown").text(self.countdown + "s");
             if (self.countdown <= 0) {
-                self.countdown = 10;
+                self.countdown = 60;
                 self.refresh();
+            }
+
+            self.sites_countdown--;
+            var sm = Math.floor(self.sites_countdown / 60);
+            var ss = self.sites_countdown % 60;
+            self.$("#km-sites-countdown").text(sm + "m " + (ss < 10 ? "0" + ss : ss) + "s");
+            if (self.sites_countdown <= 0) {
+                self.sites_countdown = 300;
+                self.check_sites();
             }
         }, 1000);
     },
 
     reset_countdown: function () {
-        this.countdown = 10;
+        this.countdown = 60;
         clearInterval(this.countdown_timer);
         this.start_countdown();
     },
