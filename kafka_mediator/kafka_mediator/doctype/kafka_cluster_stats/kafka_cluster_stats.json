@@ -8,6 +8,7 @@
   "cluster",
   "broker_status",
   "last_updated",
+  "last_sms_sent",
   "column_break_jysu",
   "total_topics",
   "total_messages",
@@ -33,6 +34,12 @@
    "fieldname": "last_updated",
    "fieldtype": "Datetime",
    "label": "Last Updated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_sms_sent",
+   "fieldtype": "Datetime",
+   "label": "Last SMS Sent",
    "read_only": 1
   },
   {

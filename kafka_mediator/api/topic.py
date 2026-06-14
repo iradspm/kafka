@@ -4,15 +4,18 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+import logging
+
 import frappe
 from confluent_kafka import Consumer, TopicPartition, TopicCollection
-from confluent_kafka.admin import AdminClient, NewTopic, _ConsumerGroupTopicPartitions
+from confluent_kafka.admin import AdminClient, NewTopic, _ConsumerGroupTopicPartitions, ConfigResource
+
+logger = logging.getLogger(__name__)
 
 from kafka_mediator import (
     get_default_settings,
     validate_payload,
     format_response,
-    fetch_live_topic_stats,
     fetch_live_cluster_stats,
     _build_cluster_conf,
 )
@@ -296,6 +299,8 @@ def get_topic_stats(**kwargs):
             except Exception:
                 pass
 
+        retention_days = _get_topic_retention_days(admin_client, topic_name)
+
         return format_response(
             status_code=200,
             message="Topic stats retrieved successfully.",
@@ -306,6 +311,7 @@ def get_topic_stats(**kwargs):
                 "replication_factor": replication_factor,
                 "message_count":      message_count,
                 "lag":                total_lag,
+                "retention_days":     retention_days,
                 "consumer_groups":    consumer_groups,
                 "consumers": [
                     fm
@@ -410,6 +416,7 @@ def get_cluster_stats(**kwargs):
                 "replication_factor": ts["replication_factor"],
                 "message_count":      msg_count,
                 "lag":                lag,
+                "retention_days":     ts.get("retention_days"),
                 "consumer_groups":    consumer_groups,
                 # legacy field the JS panel uses to render consumer cards
                 "consumers": [
@@ -487,6 +494,72 @@ def list_topics(**kwargs):
             status_code=500,
             message=f"Failed to list topics: {str(e)}"
         )
+
+
+def _get_topic_retention_days(admin_client, topic_name):
+    """Return retention period in days, or None if unset / infinite."""
+    try:
+        resource = ConfigResource(ConfigResource.Type.TOPIC, topic_name)
+        futures = admin_client.describe_configs([resource])
+        config = futures[resource].result()
+        raw = config.get("retention.ms")
+        if raw is None:
+            return None
+        ms = int(raw.value)
+        if ms < 0:
+            return None  # -1 means infinite retention
+        return round(ms / 86_400_000, 2)
+    except Exception:
+        return None
+
+
+@frappe.whitelist()
+@validate_payload("topic_name", "retention_days")
+def set_topic_retention(**kwargs):
+    """
+    Set retention period on a Kafka topic.
+
+    POST /api/method/kafka_mediator.api.topic.set_topic_retention
+        topic_name=<name>&retention_days=<days>
+
+    Pass retention_days=-1 to set infinite retention.
+    """
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name = payload.get("topic_name").strip().lower()
+    try:
+        retention_days = float(payload.get("retention_days"))
+    except (ValueError, TypeError):
+        return format_response(status_code=400, message="retention_days must be a number.")
+
+    if retention_days != -1 and retention_days < 5:
+        return format_response(status_code=400, message="retention_days must be at least 5 (or -1 for infinite).")
+
+    topic_row = frappe.db.get_value("Kafka Topic", {"topic_name": topic_name}, ["name", "cluster"], as_dict=True)
+    if not topic_row:
+        return format_response(status_code=404, message=f"Topic '{topic_name}' not found.")
+
+    retention_ms = str(int(retention_days * 86_400_000)) if retention_days != -1 else "-1"
+
+    try:
+        cluster = frappe.get_doc("Kafka Cluster", topic_row.cluster)
+        conf = _build_cluster_conf(cluster)
+        admin_client = AdminClient(conf)
+
+        resource = ConfigResource(ConfigResource.Type.TOPIC, topic_name, set_config={"retention.ms": retention_ms})
+        futures = admin_client.alter_configs([resource])
+        futures[resource].result()
+
+        label = "infinite" if retention_days == -1 else f"{retention_days} day(s)"
+        return format_response(
+            status_code=200,
+            message=f"Retention for '{topic_name}' set to {label}.",
+            data={"topic_name": topic_name, "retention_ms": int(retention_ms), "retention_days": retention_days}
+        )
+
+    except Exception as e:
+        return format_response(status_code=500, message=f"Failed to set retention for '{topic_name}': {str(e)}")
 
 
 @frappe.whitelist()
