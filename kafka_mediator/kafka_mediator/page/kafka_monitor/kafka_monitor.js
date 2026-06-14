@@ -24,6 +24,7 @@ var KafkaMonitor = {
         this.$ = function (sel) { return $(wrapper).find(sel); };
         this._inject_expand_buttons();
         this.load_clusters();
+        this.load_sites();
         this.bind_events();
     },
 
@@ -97,6 +98,24 @@ var KafkaMonitor = {
         $(this.wrapper).on("click", ".km-topic-row", function () {
             var topic = $(this).data("topic");
             self.open_panel(topic);
+        });
+
+        $(this.wrapper).on("click", "#km-add-site-btn", function () {
+            self._do_add_site();
+        });
+
+        $(this.wrapper).on("click", "#km-sites-refresh-btn", function () {
+            self.check_sites();
+        });
+
+        $(this.wrapper).on("click", ".km-site-toggle-btn", function (e) {
+            e.stopPropagation();
+            self._do_toggle_site($(this).data("name"));
+        });
+
+        $(this.wrapper).on("click", ".km-site-delete-btn", function (e) {
+            e.stopPropagation();
+            self._do_delete_site($(this).data("name"), $(this).data("site"));
         });
 
         $(this.wrapper).on("click", ".km-expand-btn", function (e) {
@@ -599,6 +618,145 @@ var KafkaMonitor = {
         var pad = function (n) { return n < 10 ? "0" + n : n; };
         var ts = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
         this.$("#km-last-updated").text("Last updated: " + ts);
+    },
+
+    // ── Site Monitor ─────────────────────────────────────────────────────────
+    load_sites: function () {
+        var self = this;
+        frappe.call({
+            method: "kafka_mediator.api.site_monitor.list_sites",
+            callback: function (r) {
+                if (r && r.status_code === 200) self.render_sites(r.data || []);
+            }
+        });
+    },
+
+    check_sites: function () {
+        var self = this;
+        self.$("#km-sites-refresh-icon").addClass("km-spinning");
+        frappe.call({
+            method: "kafka_mediator.api.site_monitor.check_sites",
+            callback: function (r) {
+                self.$("#km-sites-refresh-icon").removeClass("km-spinning");
+                if (r && r.status_code === 200) self.render_sites(r.data || []);
+            },
+            error: function () {
+                self.$("#km-sites-refresh-icon").removeClass("km-spinning");
+            }
+        });
+    },
+
+    render_sites: function (sites) {
+        var $tbody = this.$("#km-sites-tbody").empty();
+        this.$("#km-sites-count").text(sites.length);
+        if (!sites.length) {
+            $tbody.html('<tr><td colspan="6" class="km-empty">No sites configured.</td></tr>');
+            return;
+        }
+        sites.forEach(function (s) {
+            var st = s.status || "Unknown";
+            var dot_cls  = { Up: "km-dot-green", Down: "km-dot-red" }[st] || "km-dot-grey";
+            var pill_cls = { Up: "km-pill-green", Down: "km-pill-red" }[st] || "km-pill-grey";
+            var pill = '<span class="km-status-pill ' + pill_cls + '"><span class="km-dot ' + dot_cls + '"></span>' + st + '</span>';
+
+            var resp_html = '—';
+            if (s.response_ms !== null && s.response_ms !== undefined) {
+                var resp_cls = s.response_ms < 500 ? "km-site-resp-fast" : "km-site-resp-slow";
+                resp_html = '<span class="' + resp_cls + '">' + s.response_ms + ' ms</span>';
+            } else {
+                resp_html = '<span class="km-site-resp-na">—</span>';
+            }
+
+            var last_checked = s.last_checked ? String(s.last_checked).split(".")[0] : "—";
+            var on_cls = s.enabled ? " km-toggle-on" : "";
+            var toggle_label = s.enabled ? "On" : "Off";
+
+            var trash_svg = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"' +
+                ' stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+                '<polyline points="3 6 5 6 21 6"></polyline>' +
+                '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>' +
+                '<path d="M10 11v6"></path><path d="M14 11v6"></path>' +
+                '<path d="M9 6V4h6v2"></path></svg>';
+
+            $tbody.append(
+                '<tr>' +
+                '<td class="km-site-name">' + s.site_name + '</td>' +
+                '<td><span class="km-site-url" title="' + s.url + '">' + s.url + '</span></td>' +
+                '<td class="text-right">' + pill + '</td>' +
+                '<td class="text-right km-num">' + resp_html + '</td>' +
+                '<td class="text-right" style="font-size:11px;color:#94a3b8">' + last_checked + '</td>' +
+                '<td class="text-right" style="white-space:nowrap;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 16px">' +
+                '<div class="km-toggle-wrap km-site-toggle-btn" title="Enable / Disable" data-name="' + s.name + '">' +
+                '<div class="km-toggle-track' + on_cls + '"><div class="km-toggle-knob"></div></div>' +
+                '<span class="km-toggle-label">' + toggle_label + '</span>' +
+                '</div>' +
+                '<button class="km-btn km-site-delete-btn" title="Remove site" data-name="' + s.name + '" data-site="' + s.site_name + '">' + trash_svg + '</button>' +
+                '</td>' +
+                '</tr>'
+            );
+        });
+    },
+
+    _do_add_site: function () {
+        var self = this;
+        frappe.prompt(
+            [
+                { fieldname: "site_name", label: "Site Name", fieldtype: "Data", reqd: 1 },
+                { fieldname: "url", label: "URL", fieldtype: "Data", reqd: 1, description: "e.g. https://mysite.example.com" }
+            ],
+            function (values) {
+                frappe.call({
+                    method: "kafka_mediator.api.site_monitor.add_site",
+                    args: { site_name: values.site_name, url: values.url },
+                    callback: function (r) {
+                        if (!r || r.status_code !== 200) {
+                            frappe.show_alert({ message: (r && r.message) || "Failed to add site.", indicator: "red" });
+                            return;
+                        }
+                        frappe.show_alert({ message: r.message, indicator: "green" });
+                        self.check_sites();
+                    }
+                });
+            },
+            "Add Monitored Site",
+            "Add"
+        );
+    },
+
+    _do_toggle_site: function (name) {
+        var self = this;
+        frappe.call({
+            method: "kafka_mediator.api.site_monitor.toggle_site",
+            args: { name: name },
+            callback: function (r) {
+                if (!r || r.status_code !== 200) {
+                    frappe.show_alert({ message: (r && r.message) || "Failed.", indicator: "red" });
+                    return;
+                }
+                self.load_sites();
+            }
+        });
+    },
+
+    _do_delete_site: function (name, site_name) {
+        var self = this;
+        frappe.confirm(
+            "Remove site <b>" + site_name + "</b> from monitoring?",
+            function () {
+                frappe.call({
+                    method: "kafka_mediator.api.site_monitor.delete_site",
+                    args: { name: name },
+                    callback: function (r) {
+                        if (!r || r.status_code !== 200) {
+                            frappe.show_alert({ message: (r && r.message) || "Failed.", indicator: "red" });
+                            return;
+                        }
+                        frappe.show_alert({ message: r.message, indicator: "green" });
+                        self.load_sites();
+                    }
+                });
+            }
+        );
     },
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -591,6 +591,98 @@
   color: #fff;
 }
 
+/* ── Sites card ── */
+#km-sites-card { margin-top: 4px; }
+#km-sites-card .km-card-header { gap: 8px; }
+
+#km-sites-card .km-table tbody tr:hover { background: #f0fdf4; }
+
+/* Site name */
+.km-site-name {
+  font-weight: 600;
+  color: var(--heading-color, #1e293b);
+}
+
+/* Site URL — muted, truncated */
+.km-site-url {
+  color: var(--text-muted, #94a3b8);
+  font-size: 11px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Response time */
+.km-site-resp-fast { color: #16a34a; font-weight: 600; }
+.km-site-resp-slow { color: #ea580c; font-weight: 600; }
+.km-site-resp-na   { color: #94a3b8; }
+
+/* Toggle switch — div-based to avoid Frappe checkbox overrides */
+.km-toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.km-toggle-track {
+  width: 34px;
+  height: 18px;
+  border-radius: 20px;
+  background: #d1d5db;
+  position: relative;
+  transition: background .2s;
+  flex-shrink: 0;
+}
+
+.km-toggle-track.km-toggle-on {
+  background: #22c55e;
+}
+
+.km-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+
+.km-toggle-track.km-toggle-on .km-toggle-knob {
+  left: 18px;
+}
+
+.km-toggle-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+  min-width: 24px;
+}
+
+/* Remove button — icon only */
+.km-site-delete-btn {
+  background: none !important;
+  border: none !important;
+  color: #d1d5db !important;
+  padding: 0 4px !important;
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: color .15s, background .15s !important;
+}
+.km-site-delete-btn:hover {
+  color: #ef4444 !important;
+  background: #fee2e2 !important;
+}
+
 /* ── Footer ── */
 .km-footer {
   display: flex;
