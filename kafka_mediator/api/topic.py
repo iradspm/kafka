@@ -86,7 +86,7 @@ def wrap_message(agent=None, bundle_id=None, source=None, resource=None, callbac
         "resource": resource
     }
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 @validate_payload("topic_name", "message")
 def produce_message(**kwargs):
 
