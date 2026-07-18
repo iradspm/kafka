@@ -86,6 +86,23 @@ def wrap_message(agent=None, bundle_id=None, source=None, resource=None, callbac
         "resource": resource
     }
 
+def operation_outcome(issue_severity, issue_code, issue_details,status_code=200, id=None):
+    operation_outcome = {
+        "resourceType": "OperationOutcome",
+        **({"id": id} if id else {}),
+        "issue": [
+            {
+                "severity": issue_severity,
+                "code": issue_code,
+                "details": {
+                    "text": issue_details
+                }
+            }
+        ]
+    }
+    frappe.local.response.http_status_code = status_code
+    frappe.local.response.update(operation_outcome)
+
 @frappe.whitelist()
 @validate_payload("topic_name", "message")
 def produce_message(**kwargs):
@@ -113,9 +130,11 @@ def produce_message(**kwargs):
     if isinstance(message, dict) and message.get("resourceType"):
         bundle_id = message.get("id", None)
         if message.get("resourceType") == "Bundle" and not bundle_id:
-            return format_response(
-                status_code=400,
-                message="Bundle.id is required in the payload when resourceType is Bundle"
+            return operation_outcome(
+                issue_severity="error",
+                issue_code="invalid",
+                issue_details="Bundle.id is required in the payload when resourceType is Bundle",
+                status_code=400
             )
         message = json.dumps(wrap_message(
             agent=agent, 
@@ -141,10 +160,12 @@ def produce_message(**kwargs):
         producer.publish_message(message)
 
         if bundle_id:
-            return format_response(
+            return operation_outcome(
+                issue_severity="information",
+                issue_code="informational",
+                issue_details="Bundle received and queued for processing. Please use the bundle resource ids to track processing status.",
                 status_code=202,
-                message="Bundle received and queued for processing. Please use the bundle resource ids to track processing status.",
-                data={"mediator_id": bundle_id}
+                id=bundle_id
             )
 
         return format_response(
