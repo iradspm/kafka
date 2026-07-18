@@ -71,7 +71,7 @@ def create_topic(**kwargs):
             message = f"Failed to create topic: {topic_name} - {str(e)}"
         )
 
-def wrap_message(agent=None, bundle_id=None, source=None, resource=None):
+def wrap_message(agent=None, bundle_id=None, source=None, resource=None, callback_url=None):
     return {
         "meta": {
             "event": "bundle_received",
@@ -80,6 +80,7 @@ def wrap_message(agent=None, bundle_id=None, source=None, resource=None):
             "traceId": uuid.uuid4().hex[:10],
             "agentId": agent,
             "bundleId": bundle_id,
+            "callbackUrl": callback_url,
             "version": "v1"
         },
         "resource": resource
@@ -98,6 +99,7 @@ def produce_message(**kwargs):
     # Wrap any FHIR resource with metadata for downstream processing
     agent = frappe.request.headers.get("X-HIE-AGENT", "")
     source = frappe.request.headers.get("X-HIE-SOURCE", "kafka-mediator")
+    callback_url = frappe.request.headers.get("X-HIE-CALLBACK", "")
 
     bundle_id = None
 
@@ -115,7 +117,13 @@ def produce_message(**kwargs):
                 status_code=400,
                 message="Bundle.id is required in the payload when resourceType is Bundle"
             )
-        message = json.dumps(wrap_message(agent=agent, bundle_id=bundle_id, source=source, resource=message))
+        message = json.dumps(wrap_message(
+            agent=agent, 
+            bundle_id=bundle_id, 
+            source=source,
+            resource=message,
+            callback_url=callback_url or None
+            ))
     else:
         if isinstance(message, (dict, list)):
             message = json.dumps(message)
