@@ -60,6 +60,61 @@ def _collect_alter_errors(response):
 
 
 @frappe.whitelist()
+@validate_payload("topic_name", "num_partitions")
+def increase_partitions(**kwargs):
+    """
+    Increase a topic's partition count. Partition counts can only grow — Kafka
+    does not support reducing them, so num_partitions must exceed the current count.
+
+    POST /api/method/kafka_mediator.api.partition.increase_partitions
+    {
+        "topic_name": "my-topic",
+        "num_partitions": 30
+    }
+    """
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name = payload.get("topic_name").strip().lower()
+
+    try:
+        num_partitions = int(payload.get("num_partitions"))
+    except (ValueError, TypeError):
+        return format_response(status_code=400, message="'num_partitions' must be an integer.")
+
+    if num_partitions < 1:
+        return format_response(status_code=400, message="'num_partitions' must be a positive integer.")
+
+    topic_row = frappe.db.get_value(
+        "Kafka Topic", {"topic_name": topic_name}, ["name", "num_partitions"], as_dict=True
+    )
+    if not topic_row:
+        return format_response(status_code=404, message=f"Topic '{topic_name}' not found.")
+
+    current = int(topic_row.num_partitions or 1)
+    if num_partitions <= current:
+        return format_response(
+            status_code=400,
+            message=(
+                f"Topic '{topic_name}' already has {current} partition(s); "
+                f"partition count can only be increased (requested {num_partitions})."
+            ),
+        )
+
+    try:
+        topic_doc = frappe.get_doc("Kafka Topic", topic_row.name)
+        topic_doc.increase_partitions(num_partitions)
+    except Exception as e:
+        return format_response(status_code=500, message=f"Failed to increase partitions: {str(e)}")
+
+    return format_response(
+        status_code=200,
+        message=f"Partitions for '{topic_name}' increased from {current} to {num_partitions}.",
+        data={"topic_name": topic_name, "previous_partitions": current, "num_partitions": num_partitions},
+    )
+
+
+@frappe.whitelist()
 @validate_payload("topic_name", "assignments")
 def reassign_partitions(**kwargs):
     """
