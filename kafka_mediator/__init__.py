@@ -326,10 +326,8 @@ def monitor_kafka_metrics():
 
             current_time = time.time()
             max_lag_threshold = consumer.max_lag_threshold or settings.max_lag_threshold
-            min_lag_threshold = consumer.min_lag_threshold or settings.min_lag_threshold
             max_consumers = consumer.max_consumers or settings.max_consumers
             scale_up_cooldown = consumer.scale_up_cooldown or settings.scale_up_cooldown
-            scale_down_cooldown = consumer.scale_down_cooldown or settings.scale_down_cooldown
             messages_per_consumer = settings.messages_per_consumer
 
             group_members = frappe.get_all("Kafka Consumer", filters={
@@ -347,43 +345,21 @@ def monitor_kafka_metrics():
 
             _send_lag_sms(consumer.cluster, consumer.topic, consumer.consumer_group, lag, settings)
 
+            # Scale-up only — consumers are never automatically removed.
+            # Once scaled up they stay up until manually disabled.
             if lag >= max_lag_threshold:
+                # Scale proportionally to real backlog: one consumer per
+                # `messages_per_consumer` of lag, capped at max_consumers.
                 target_consumers = max(1, min(max_consumers, (lag + messages_per_consumer - 1) // messages_per_consumer))
                 if target_consumers > current_consumers:
                     last_scale_up = consumer.last_scale_up_time or 0
                     if current_time - last_scale_up > scale_up_cooldown:
                         scale_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
                         frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time)
-                        for member in group_members:
-                            frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
                     else:
                         logger.info(f"Consumer {consumer.name} scale-up on cooldown (lag: {lag}, target: {target_consumers})")
-
-            elif lag <= min_lag_threshold:
-                target_consumers = max(1, (lag + messages_per_consumer - 1) // messages_per_consumer)
-                if target_consumers < current_consumers:
-                    low_lag_count = (consumer.low_lag_count or 0) + 1
-                    for member in group_members:
-                        frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", low_lag_count)
-                    if low_lag_count >= 3:
-                        last_scale_down = consumer.last_scale_down_time or 0
-                        if current_time - last_scale_down > scale_down_cooldown:
-                            scale_down_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
-                            frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_down_time", current_time)
-                            for member in group_members:
-                                frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
-                        else:
-                            logger.info(f"Consumer {consumer.name} scale-down on cooldown (lag: {lag}, target: {target_consumers})")
-                    else:
-                        logger.info(f"Consumer {consumer.name} low lag count: {low_lag_count}/3 (lag: {lag})")
-                else:
-                    for member in group_members:
-                        frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
-
             else:
-                for member in group_members:
-                    frappe.db.set_value("Kafka Consumer", member.name, "low_lag_count", 0)
-                logger.info(f"Consumer {consumer.name} lag in hold zone: {lag} (min: {min_lag_threshold}, max: {max_lag_threshold}), consumers: {current_consumers}")
+                logger.info(f"Consumer {consumer.name} lag below scale-up threshold: {lag} (max: {max_lag_threshold}), consumers: {current_consumers} — no scale-down")
 
             frappe.db.commit()
 

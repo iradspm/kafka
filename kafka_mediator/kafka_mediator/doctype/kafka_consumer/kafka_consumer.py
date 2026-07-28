@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL = 30  # seconds between heartbeat DB writes
+ENABLED_CHECK_INTERVAL = 3  # seconds between re-reading the `enabled` flag from DB
 
 
 class KafkaConsumer(Document):
@@ -181,8 +182,29 @@ class KafkaConsumer(Document):
 
             producer = Producer({**base_conf, 'acks': 'all', 'retries': 3})
             self._producer = producer
-            # Per-consumer executor — prevents one slow consumer starving others
-            self._executor = ThreadPoolExecutor(max_workers=10)
+
+            # Pooled HTTP session — reuses TCP/TLS connections across messages
+            # instead of a fresh handshake per requests.post().
+            self._session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
+            self._session.mount("http://", adapter)
+            self._session.mount("https://", adapter)
+
+            # Cached HIE bearer token (regenerated only near expiry) + its lock.
+            self._auth_token = None
+            self._auth_token_exp = 0
+            self._auth_lock = threading.Lock()
+
+            # Decrypt auth credentials once, in this thread (which has a DB
+            # connection), so worker threads never touch the DB on the hot path.
+            self._cached_credentials = self._load_credentials()
+
+            # Per-consumer executor — prevents one slow consumer starving others.
+            # Workers are intentionally DB-free (no frappe.connect): the happy path
+            # is a pooled HTTP call + Kafka produce, so we avoid the connection
+            # explosion that per-worker DB connections would cause
+            # (consumers × max_workers could exhaust MariaDB max_connections).
+            self._executor = ThreadPoolExecutor(max_workers=25)
 
             # Mark thread as running
             frappe.db.set_value("Kafka Consumer", self.name, {
@@ -206,6 +228,8 @@ class KafkaConsumer(Document):
 
             consumer = None
             last_heartbeat_tick = time.monotonic()
+            last_enabled_check = 0.0
+            is_enabled = True
 
             try:
                 consumer = Consumer(conf)
@@ -220,10 +244,21 @@ class KafkaConsumer(Document):
                     f"(instance_id={self.name})"
                 )
 
-                while frappe.db.get_value("Kafka Consumer", self.name, "enabled"):
+                while is_enabled:
                     try:
                         # DB heartbeat
                         now = time.monotonic()
+
+                        # Re-read the enabled flag at most every ENABLED_CHECK_INTERVAL
+                        # seconds instead of on every single poll iteration.
+                        if now - last_enabled_check > ENABLED_CHECK_INTERVAL:
+                            is_enabled = bool(
+                                frappe.db.get_value("Kafka Consumer", self.name, "enabled")
+                            )
+                            last_enabled_check = now
+                            if not is_enabled:
+                                break
+
                         if now - last_heartbeat_tick > HEARTBEAT_INTERVAL:
                             frappe.db.set_value(
                                 "Kafka Consumer", self.name,
@@ -335,6 +370,10 @@ class KafkaConsumer(Document):
                     self._executor.shutdown(wait=False)
                 except Exception:
                     pass
+                try:
+                    self._session.close()
+                except Exception:
+                    pass
 
             frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped")
             frappe.db.commit()
@@ -359,13 +398,12 @@ class KafkaConsumer(Document):
 
     def _process_message(self, msg):
         """Called in a thread-pool worker. Handles retry + produce/DLQ for one message.
-        Returns True if the offset should be committed, False if it should be redelivered."""
-        frappe.init(site=self._site)
-        frappe.connect()
-        try:
-            return self._process_message_inner(msg)
-        finally:
-            frappe.destroy()
+        Returns True if the offset should be committed, False if it should be redelivered.
+
+        Worker threads are intentionally DB-free — credentials are pre-decrypted on
+        the main thread and logging here uses the stdlib logger, not frappe.log_error
+        (which writes to the DB). This keeps the hot path off the database entirely."""
+        return self._process_message_inner(msg)
 
     def _process_message_inner(self, msg):
         message = msg.value().decode('utf-8')
@@ -390,7 +428,7 @@ class KafkaConsumer(Document):
             return True  # forwarded — safe to commit
 
         # No failure_topic: leave uncommitted so Kafka redelivers on next poll
-        frappe.log_error(
+        logger.error(
             f"Consumer {self.name}: no failure_topic set, leaving offset {msg.offset()} "
             f"partition {msg.partition()} uncommitted for redelivery"
         )
@@ -403,7 +441,7 @@ class KafkaConsumer(Document):
             producer.produce(topic, value=value.encode('utf-8'))
             producer.poll(0)
         except Exception as e:
-            frappe.log_error(f"Producer error: {str(e)}")
+            logger.error(f"Consumer {self.name}: producer error: {str(e)}")
 
     def _on_partition_assign(self, consumer, partitions):
         assigned = [f"{p.topic}[{p.partition}]" for p in partitions]
@@ -423,23 +461,48 @@ class KafkaConsumer(Document):
         except Exception:
             pass
 
+    def _load_credentials(self):
+        """Decrypt auth credentials once, on the main consumer thread (which has a
+        DB connection). Called during setup so worker threads never decrypt — and
+        thus never touch the DB — on the hot path."""
+        creds = {"basic_header": None}
+        if self.api_username and self.api_password:
+            auth_str = f"{self.api_username}:{self.get_password('api_password')}"
+            creds["basic_header"] = "Basic " + base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+        elif self.api_consumer_key and self.api_consumer_secret:
+            creds["consumer_key"] = self.get_password("api_consumer_key")
+            creds["consumer_secret"] = self.get_password("api_consumer_secret")
+        return creds
+
+    def _get_hie_bearer(self, creds):
+        """Return a cached HIE bearer token, regenerating only when it is within
+        60s of expiry. Guarded by a lock so concurrent workers mint it once."""
+        now = int(time.time())
+        if self._auth_token and now < self._auth_token_exp - 60:
+            return self._auth_token
+        with self._auth_lock:
+            if self._auth_token and now < self._auth_token_exp - 60:
+                return self._auth_token
+            self._auth_token = self.generate_hie_auth_token(
+                consumer_key=creds["consumer_key"], consumer_secret=creds["consumer_secret"]
+            )
+            self._auth_token_exp = now + 3600  # matches token exp in generate_hie_auth_token
+            return self._auth_token
+
     def call_api_endpoint(self, message):
         try:
             headers = {'Content-Type': 'application/json'}
-            if self.api_username and self.api_password:
-                auth_str = f"{self.api_username}:{self.get_password('api_password')}"
-                headers['Authorization'] = f"Basic {base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')}"
+            creds = self._cached_credentials
+            if creds.get("basic_header"):
+                headers['Authorization'] = creds["basic_header"]
 
-            elif self.api_consumer_key and self.api_consumer_secret:
-                cons_key = self.get_password("api_consumer_key")
-                cons_secret = self.get_password("api_consumer_secret")
-                token = self.generate_hie_auth_token(consumer_key=cons_key, consumer_secret=cons_secret)
-                headers['Authorization'] = f"Bearer {token}"
+            elif creds.get("consumer_key") and creds.get("consumer_secret"):
+                headers['Authorization'] = f"Bearer {self._get_hie_bearer(creds)}"
 
             elif self.api_key:
                 headers['Authorization'] = f"Bearer {self.api_key}"
 
-            response = requests.post(
+            response = self._session.post(
                 self.api_endpoint,
                 data=message.encode("utf-8"),
                 headers=headers,

@@ -25,7 +25,7 @@
  ],
  "fields": [
   {
-   "default": "500",
+   "default": "100",
    "fieldname": "messages_per_consumer",
    "fieldtype": "Int",
    "in_list_view": 1,
@@ -61,14 +61,14 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "1000",
+   "default": "100",
    "fieldname": "max_lag_threshold",
    "fieldtype": "Int",
    "label": "Max Lag Threshold",
    "reqd": 1
   },
   {
-   "default": "50",
+   "default": "20",
    "fieldname": "min_lag_threshold",
    "fieldtype": "Int",
    "label": "Min Lag Threshold",

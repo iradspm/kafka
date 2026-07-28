@@ -99,7 +99,7 @@
    "options": "Kafka Producer"
   },
   {
-   "default": "1000",
+   "default": "100",
    "fieldname": "max_lag_threshold",
    "fieldtype": "Int",
    "label": "Max Lag Threshold"
@@ -136,7 +136,7 @@
    "depends_on": "failure_topic"
   },
   {
-   "default": "100",
+   "default": "20",
    "fieldname": "min_lag_threshold",
    "fieldtype": "Int",
    "label": "Min Lag Threshold"
