@@ -66,7 +66,7 @@ def restart_dead_consumers():
     for entry in dead_consumers:
         try:
             consumer_doc = frappe.get_doc("Kafka Consumer", entry["name"])
-            frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting")
+            frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting", update_modified=False)
             frappe.db.commit()
             threading.Thread(target=consumer_doc.consume_messages, args=(site,), daemon=True).start()
             logger.info(f"Auto-restarted stale consumer {entry['name']}")
@@ -180,7 +180,7 @@ def heal_lagging_groups():
                         continue
                     try:
                         doc = frappe.get_doc("Kafka Consumer", c["name"])
-                        frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
+                        frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting", update_modified=False)
                         frappe.db.commit()
                         threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
                         already_restarted.add(c["name"])
@@ -335,9 +335,15 @@ def monitor_kafka_metrics():
             }, fields=["name"])
 
             # Write lag to all group members so every consumer row shows current lag
-            for member in group_members:
-                frappe.db.set_value("Kafka Consumer", member.name, "current_lag", lag)
-            frappe.db.commit()
+            # Use direct SQL UPDATE to avoid lock contention with consumer threads
+            if group_members:
+                member_names = [m.name for m in group_members]
+                placeholders = ', '.join(['%s'] * len(member_names))
+                frappe.db.sql(f"""
+                    UPDATE `tabKafka Consumer`
+                    SET `current_lag` = %s
+                    WHERE `name` IN ({placeholders})
+                """, [lag] + member_names, auto_commit=False)
 
             current_consumers = len(frappe.get_all("Kafka Consumer", filters={
                 "topic": consumer.topic, "consumer_group": consumer.consumer_group, "enabled": 1
@@ -355,7 +361,7 @@ def monitor_kafka_metrics():
                     last_scale_up = consumer.last_scale_up_time or 0
                     if current_time - last_scale_up > scale_up_cooldown:
                         scale_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
-                        frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time)
+                        frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time, update_modified=False)
                     else:
                         logger.info(f"Consumer {consumer.name} scale-up on cooldown (lag: {lag}, target: {target_consumers})")
             else:
@@ -455,29 +461,28 @@ def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
         return
 
     # Decrypt credentials from source consumer once
+    # Only retrieve passwords that actually exist in __Auth table
     api_password = get_decrypted_password(
         "Kafka Consumer", consumer_name, "api_password", raise_exception=False
-    )
+    ) or None
     api_consumer_key = get_decrypted_password(
         "Kafka Consumer", consumer_name, "api_consumer_key", raise_exception=False
-    )
+    ) or None
     api_consumer_secret = get_decrypted_password(
         "Kafka Consumer", consumer_name, "api_consumer_secret", raise_exception=False
-    )
+    ) or None
 
     while consumers_needed > 0 and total_consumers < max_consumers:
         try:
-            new_consumer = frappe.get_doc({
+            # Build consumer dict with only non-None password fields
+            consumer_dict = {
                 "doctype": "Kafka Consumer",
                 "cluster": source.cluster,
                 "topic": source.topic,
                 "consumer_group": source.consumer_group,
                 "api_endpoint": source.api_endpoint,
                 "api_username": source.api_username,
-                "api_password": api_password,
                 "api_key": source.api_key,
-                "api_consumer_key": api_consumer_key,
-                "api_consumer_secret": api_consumer_secret,
                 "output_topic": source.output_topic,
                 "failure_topic": source.failure_topic,
                 "max_retries": source.max_retries,
@@ -487,7 +492,16 @@ def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
                 "scale_up_cooldown": settings.scale_up_cooldown,
                 "scale_down_cooldown": settings.scale_down_cooldown,
                 "enabled": 1
-            })
+            }
+            # Only add password fields if they have actual values
+            if api_password:
+                consumer_dict["api_password"] = api_password
+            if api_consumer_key:
+                consumer_dict["api_consumer_key"] = api_consumer_key
+            if api_consumer_secret:
+                consumer_dict["api_consumer_secret"] = api_consumer_secret
+
+            new_consumer = frappe.get_doc(consumer_dict)
             new_consumer.insert()
             logger.info(f"Scaled up: new consumer {new_consumer.name} created for topic {topic_name}")
             consumers_needed -= 1

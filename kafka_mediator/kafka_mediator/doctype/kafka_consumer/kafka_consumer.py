@@ -211,7 +211,7 @@ class KafkaConsumer(Document):
                 "thread_status": "running",
                 "last_heartbeat": frappe.utils.now(),
                 "last_error": None
-            })
+            }, update_modified=False)
             frappe.db.commit()
 
             # Consumer config — consumer-only keys added on top of base_conf
@@ -262,7 +262,8 @@ class KafkaConsumer(Document):
                         if now - last_heartbeat_tick > HEARTBEAT_INTERVAL:
                             frappe.db.set_value(
                                 "Kafka Consumer", self.name,
-                                "last_heartbeat", frappe.utils.now()
+                                "last_heartbeat", frappe.utils.now(),
+                                update_modified=False
                             )
                             frappe.db.commit()
                             last_heartbeat_tick = now
@@ -332,7 +333,7 @@ class KafkaConsumer(Document):
 
                     except Exception as e:
                         err_str = str(e)
-                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str)
+                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str, update_modified=False)
                         frappe.db.commit()
 
                         frappe.log_error(f"Consumer {self.name} processing error: {err_str}")
@@ -375,7 +376,7 @@ class KafkaConsumer(Document):
                 except Exception:
                     pass
 
-            frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped")
+            frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped", update_modified=False)
             frappe.db.commit()
 
         except Exception as e:
@@ -383,7 +384,7 @@ class KafkaConsumer(Document):
                 frappe.db.set_value("Kafka Consumer", self.name, {
                     "thread_status": "error",
                     "last_error": str(e)[:500]
-                })
+                }, update_modified=False)
                 frappe.db.commit()
             except Exception:
                 pass
@@ -447,7 +448,7 @@ class KafkaConsumer(Document):
         assigned = [f"{p.topic}[{p.partition}]" for p in partitions]
         logger.info(f"Consumer {self.name} assigned partitions: {assigned}")
         try:
-            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", json.dumps(assigned))
+            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", json.dumps(assigned), update_modified=False)
             frappe.db.commit()
         except Exception:
             pass
@@ -456,7 +457,7 @@ class KafkaConsumer(Document):
         revoked = [f"{p.topic}[{p.partition}]" for p in partitions]
         logger.info(f"Consumer {self.name} partitions revoked: {revoked}")
         try:
-            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", "[]")
+            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", "[]", update_modified=False)
             frappe.db.commit()
         except Exception:
             pass
@@ -466,12 +467,17 @@ class KafkaConsumer(Document):
         DB connection). Called during setup so worker threads never decrypt — and
         thus never touch the DB — on the hot path."""
         creds = {"basic_header": None}
-        if self.api_username and self.api_password:
-            auth_str = f"{self.api_username}:{self.get_password('api_password')}"
-            creds["basic_header"] = "Basic " + base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
-        elif self.api_consumer_key and self.api_consumer_secret:
-            creds["consumer_key"] = self.get_password("api_consumer_key")
-            creds["consumer_secret"] = self.get_password("api_consumer_secret")
+        if self.api_username and self.api_password and not self.is_dummy_password(self.api_password):
+            pwd = self.get_password('api_password', raise_exception=False)
+            if pwd:
+                auth_str = f"{self.api_username}:{pwd}"
+                creds["basic_header"] = "Basic " + base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+        elif self.api_consumer_key and self.api_consumer_secret and not self.is_dummy_password(self.api_consumer_key):
+            consumer_key = self.get_password("api_consumer_key", raise_exception=False)
+            consumer_secret = self.get_password("api_consumer_secret", raise_exception=False)
+            if consumer_key and consumer_secret:
+                creds["consumer_key"] = consumer_key
+                creds["consumer_secret"] = consumer_secret
         return creds
 
     def _get_hie_bearer(self, creds):

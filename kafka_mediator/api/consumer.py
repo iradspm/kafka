@@ -57,7 +57,8 @@ def create_consumer(**kwargs):
         )
 
     try:
-        consumer = frappe.get_doc({
+        # Build consumer dict with only non-empty password fields
+        consumer_dict = {
             "doctype": "Kafka Consumer",
             "cluster": settings.default_cluster,
             "topic": topic_name,
@@ -65,9 +66,6 @@ def create_consumer(**kwargs):
             "api_endpoint": api_endpoint,
             "api_key": api_key,
             "api_username": api_username,
-            "api_password": api_password,
-            "api_consumer_key":api_consumer_key,
-            "api_consumer_secret": api_consumer_secret,
             "output_topic": output_topic,
             "failure_topic": failure_topic,
             "max_lag_threshold": settings.max_lag_threshold,
@@ -76,7 +74,16 @@ def create_consumer(**kwargs):
             "scale_up_cooldown": settings.scale_up_cooldown,
             "scale_down_cooldown": settings.scale_down_cooldown,
             "enabled": 1
-        })
+        }
+        # Only add password fields if they have actual values
+        if api_password:
+            consumer_dict["api_password"] = api_password
+        if api_consumer_key:
+            consumer_dict["api_consumer_key"] = api_consumer_key
+        if api_consumer_secret:
+            consumer_dict["api_consumer_secret"] = api_consumer_secret
+
+        consumer = frappe.get_doc(consumer_dict)
         consumer.insert()
 
         return format_response(
@@ -114,7 +121,7 @@ def disable_consumer(**kwargs):
         )
 
     try:
-        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0)
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0, update_modified=False)
         frappe.db.commit()
         return format_response(
             status_code=200,
@@ -150,7 +157,7 @@ def enable_consumer(**kwargs):
                 message=f"Consumer '{consumer_id}' is already running. Disable it first if you want to restart."
             )
 
-        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 1)
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 1, update_modified=False)
         frappe.get_doc("Kafka Consumer", consumer_id).restart_consumer_thread()
         return format_response(
             status_code=200,
@@ -248,12 +255,13 @@ def scale_up_consumer(**kwargs):
         ["api_key", "api_username", "max_retries"],
         as_dict=True
     )
-    api_password        = get_decrypted_password("Kafka Consumer", source_name, "api_password", raise_exception=False)
-    api_consumer_key    = get_decrypted_password("Kafka Consumer", source_name, "api_consumer_key", raise_exception=False)
-    api_consumer_secret = get_decrypted_password("Kafka Consumer", source_name, "api_consumer_secret", raise_exception=False)
+    api_password        = get_decrypted_password("Kafka Consumer", source_name, "api_password", raise_exception=False) or None
+    api_consumer_key    = get_decrypted_password("Kafka Consumer", source_name, "api_consumer_key", raise_exception=False) or None
+    api_consumer_secret = get_decrypted_password("Kafka Consumer", source_name, "api_consumer_secret", raise_exception=False) or None
 
     try:
-        consumer = frappe.get_doc({
+        # Build consumer dict with only non-None password fields
+        consumer_dict = {
             "doctype": "Kafka Consumer",
             "cluster": existing.cluster,
             "topic": topic_name,
@@ -261,9 +269,6 @@ def scale_up_consumer(**kwargs):
             "api_endpoint": existing.api_endpoint,
             "api_key": source_full.api_key,
             "api_username": source_full.api_username,
-            "api_password": api_password,
-            "api_consumer_key": api_consumer_key,
-            "api_consumer_secret": api_consumer_secret,
             "output_topic": existing.output_topic,
             "failure_topic": existing.failure_topic,
             "max_retries": source_full.max_retries,
@@ -273,7 +278,16 @@ def scale_up_consumer(**kwargs):
             "scale_up_cooldown": settings.scale_up_cooldown,
             "scale_down_cooldown": settings.scale_down_cooldown,
             "enabled": 1
-        })
+        }
+        # Only add password fields if they have actual values
+        if api_password:
+            consumer_dict["api_password"] = api_password
+        if api_consumer_key:
+            consumer_dict["api_consumer_key"] = api_consumer_key
+        if api_consumer_secret:
+            consumer_dict["api_consumer_secret"] = api_consumer_secret
+
+        consumer = frappe.get_doc(consumer_dict)
         consumer.insert()
 
         return format_response(
@@ -316,7 +330,7 @@ def restart_consumer_group(**kwargs):
     for c in consumers:
         try:
             doc = frappe.get_doc("Kafka Consumer", c["name"])
-            frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
+            frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting", update_modified=False)
             frappe.db.commit()
             threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
             started.append(c["name"])
