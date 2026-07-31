@@ -235,7 +235,7 @@ def publish_message(**kwargs):
         return operation_outcome(
             issue_severity="information",
             issue_code="informational",
-            issue_details="Message received",
+            issue_details="Message received and queued for processing",
             status_code=202,
             id=bundle_id if bundle_id else None
         )
