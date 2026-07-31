@@ -93,7 +93,7 @@ def heal_lagging_groups():
         filters=[["thread_status", "=", "restarting"]],
         pluck="name"
     )
-    already_restarted.update(already_restarted)
+    already_restarted.update(recently_restarted)
 
     clusters = frappe.get_all("Kafka Cluster", fields=["name"])
     for cluster_row in clusters:
