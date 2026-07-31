@@ -467,12 +467,17 @@ class KafkaConsumer(Document):
         DB connection). Called during setup so worker threads never decrypt — and
         thus never touch the DB — on the hot path."""
         creds = {"basic_header": None}
-        if self.api_username and self.api_password:
-            auth_str = f"{self.api_username}:{self.get_password('api_password')}"
-            creds["basic_header"] = "Basic " + base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
-        elif self.api_consumer_key and self.api_consumer_secret:
-            creds["consumer_key"] = self.get_password("api_consumer_key")
-            creds["consumer_secret"] = self.get_password("api_consumer_secret")
+        if self.api_username and self.api_password and not self.is_dummy_password(self.api_password):
+            pwd = self.get_password('api_password', raise_exception=False)
+            if pwd:
+                auth_str = f"{self.api_username}:{pwd}"
+                creds["basic_header"] = "Basic " + base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+        elif self.api_consumer_key and self.api_consumer_secret and not self.is_dummy_password(self.api_consumer_key):
+            consumer_key = self.get_password("api_consumer_key", raise_exception=False)
+            consumer_secret = self.get_password("api_consumer_secret", raise_exception=False)
+            if consumer_key and consumer_secret:
+                creds["consumer_key"] = consumer_key
+                creds["consumer_secret"] = consumer_secret
         return creds
 
     def _get_hie_bearer(self, creds):
