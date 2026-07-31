@@ -66,7 +66,7 @@ def restart_dead_consumers():
     for entry in dead_consumers:
         try:
             consumer_doc = frappe.get_doc("Kafka Consumer", entry["name"])
-            frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting")
+            frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting", update_modified=False)
             frappe.db.commit()
             threading.Thread(target=consumer_doc.consume_messages, args=(site,), daemon=True).start()
             logger.info(f"Auto-restarted stale consumer {entry['name']}")
@@ -180,7 +180,7 @@ def heal_lagging_groups():
                         continue
                     try:
                         doc = frappe.get_doc("Kafka Consumer", c["name"])
-                        frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
+                        frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting", update_modified=False)
                         frappe.db.commit()
                         threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
                         already_restarted.add(c["name"])
@@ -335,9 +335,15 @@ def monitor_kafka_metrics():
             }, fields=["name"])
 
             # Write lag to all group members so every consumer row shows current lag
-            for member in group_members:
-                frappe.db.set_value("Kafka Consumer", member.name, "current_lag", lag)
-            frappe.db.commit()
+            # Use direct SQL UPDATE to avoid lock contention with consumer threads
+            if group_members:
+                member_names = [m.name for m in group_members]
+                placeholders = ', '.join(['%s'] * len(member_names))
+                frappe.db.sql(f"""
+                    UPDATE `tabKafka Consumer`
+                    SET `current_lag` = %s
+                    WHERE `name` IN ({placeholders})
+                """, [lag] + member_names, auto_commit=False)
 
             current_consumers = len(frappe.get_all("Kafka Consumer", filters={
                 "topic": consumer.topic, "consumer_group": consumer.consumer_group, "enabled": 1
@@ -355,7 +361,7 @@ def monitor_kafka_metrics():
                     last_scale_up = consumer.last_scale_up_time or 0
                     if current_time - last_scale_up > scale_up_cooldown:
                         scale_consumer(consumer.name, consumer.topic, consumer.consumer_group, target_consumers)
-                        frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time)
+                        frappe.db.set_value("Kafka Consumer", consumer.name, "last_scale_up_time", current_time, update_modified=False)
                     else:
                         logger.info(f"Consumer {consumer.name} scale-up on cooldown (lag: {lag}, target: {target_consumers})")
             else:

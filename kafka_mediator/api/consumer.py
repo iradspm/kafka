@@ -66,7 +66,7 @@ def create_consumer(**kwargs):
             "api_key": api_key,
             "api_username": api_username,
             "api_password": api_password,
-            "api_consumer_key":api_consumer_key,
+            "api_consumer_key": api_consumer_key,
             "api_consumer_secret": api_consumer_secret,
             "output_topic": output_topic,
             "failure_topic": failure_topic,
@@ -114,7 +114,7 @@ def disable_consumer(**kwargs):
         )
 
     try:
-        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0)
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 0, update_modified=False)
         frappe.db.commit()
         return format_response(
             status_code=200,
@@ -150,7 +150,7 @@ def enable_consumer(**kwargs):
                 message=f"Consumer '{consumer_id}' is already running. Disable it first if you want to restart."
             )
 
-        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 1)
+        frappe.db.set_value("Kafka Consumer", consumer_id, "enabled", 1, update_modified=False)
         frappe.get_doc("Kafka Consumer", consumer_id).restart_consumer_thread()
         return format_response(
             status_code=200,
@@ -316,7 +316,7 @@ def restart_consumer_group(**kwargs):
     for c in consumers:
         try:
             doc = frappe.get_doc("Kafka Consumer", c["name"])
-            frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting")
+            frappe.db.set_value("Kafka Consumer", c["name"], "thread_status", "restarting", update_modified=False)
             frappe.db.commit()
             threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
             started.append(c["name"])

@@ -211,7 +211,7 @@ class KafkaConsumer(Document):
                 "thread_status": "running",
                 "last_heartbeat": frappe.utils.now(),
                 "last_error": None
-            })
+            }, update_modified=False)
             frappe.db.commit()
 
             # Consumer config — consumer-only keys added on top of base_conf
@@ -262,7 +262,8 @@ class KafkaConsumer(Document):
                         if now - last_heartbeat_tick > HEARTBEAT_INTERVAL:
                             frappe.db.set_value(
                                 "Kafka Consumer", self.name,
-                                "last_heartbeat", frappe.utils.now()
+                                "last_heartbeat", frappe.utils.now(),
+                                update_modified=False
                             )
                             frappe.db.commit()
                             last_heartbeat_tick = now
@@ -332,7 +333,7 @@ class KafkaConsumer(Document):
 
                     except Exception as e:
                         err_str = str(e)
-                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str)
+                        frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str, update_modified=False)
                         frappe.db.commit()
 
                         frappe.log_error(f"Consumer {self.name} processing error: {err_str}")
@@ -375,7 +376,7 @@ class KafkaConsumer(Document):
                 except Exception:
                     pass
 
-            frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped")
+            frappe.db.set_value("Kafka Consumer", self.name, "thread_status", "stopped", update_modified=False)
             frappe.db.commit()
 
         except Exception as e:
@@ -383,7 +384,7 @@ class KafkaConsumer(Document):
                 frappe.db.set_value("Kafka Consumer", self.name, {
                     "thread_status": "error",
                     "last_error": str(e)[:500]
-                })
+                }, update_modified=False)
                 frappe.db.commit()
             except Exception:
                 pass
@@ -447,7 +448,7 @@ class KafkaConsumer(Document):
         assigned = [f"{p.topic}[{p.partition}]" for p in partitions]
         logger.info(f"Consumer {self.name} assigned partitions: {assigned}")
         try:
-            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", json.dumps(assigned))
+            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", json.dumps(assigned), update_modified=False)
             frappe.db.commit()
         except Exception:
             pass
@@ -456,7 +457,7 @@ class KafkaConsumer(Document):
         revoked = [f"{p.topic}[{p.partition}]" for p in partitions]
         logger.info(f"Consumer {self.name} partitions revoked: {revoked}")
         try:
-            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", "[]")
+            frappe.db.set_value("Kafka Consumer", self.name, "assigned_partitions", "[]", update_modified=False)
             frappe.db.commit()
         except Exception:
             pass
