@@ -182,6 +182,75 @@ def produce_message(**kwargs):
 
 
 @frappe.whitelist()
+@validate_payload("topic_name", "message")
+def publish_message(**kwargs):
+
+    payload = kwargs
+    payload.pop("cmd", None)
+
+    topic_name = payload.get("topic_name").strip().lower()
+    message = payload.get("message")
+
+    # Wrap any FHIR resource with metadata for downstream processing
+    agent = frappe.request.headers.get("X-HIE-AGENT", "")
+    source = frappe.request.headers.get("X-HIE-SOURCE", "kafka-mediator")
+    callback_url = frappe.request.headers.get("X-HIE-CALLBACK", "")
+
+    bundle_id = None
+
+    # Normalise message to a dict if it arrived as a JSON string
+    if isinstance(message, str):
+        try:
+            message = json.loads(message)
+        except (ValueError, TypeError):
+            pass
+
+    if isinstance(message, dict) and message.get("resourceType"):
+        bundle_id = message.get("id", None)
+        message = json.dumps(wrap_message(
+            agent=agent,
+            bundle_id=bundle_id,
+            source=source,
+            resource=message,
+            callback_url=callback_url or None
+            ))
+    else:
+        if isinstance(message, (dict, list)):
+            message = json.dumps(message)
+
+    producer_name = frappe.db.get_value("Kafka Producer", {"topic": topic_name}, "name")
+    if not producer_name:
+        frappe.log_error("Producer Configuration Error", f"No producer configured for topic: {topic_name}")
+        return operation_outcome(
+            issue_severity="error",
+            issue_code="not-found",
+            issue_details="Missing key configuration. Kindly contact support for assistance.",
+            status_code=404
+        )
+
+    try:
+        producer = frappe.get_doc("Kafka Producer", producer_name)
+        producer.publish_message(message)
+
+        return operation_outcome(
+            issue_severity="information",
+            issue_code="informational",
+            issue_details="Message received",
+            status_code=202,
+            id=bundle_id if bundle_id else None
+        )
+
+    except Exception:
+        frappe.log_error("Failed to publish message", f"Failed to publish message to topic: {topic_name}. {traceback.format_exc()}")
+        return operation_outcome(
+            issue_severity="error",
+            issue_code="exception",
+            issue_details="Unexpected error occurred. Please try again later.",
+            status_code=500
+        )
+
+
+@frappe.whitelist()
 @validate_payload("topic_name")
 def get_topic_stats(**kwargs):
     """
