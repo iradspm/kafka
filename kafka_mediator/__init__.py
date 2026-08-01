@@ -14,11 +14,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_STALE_SECONDS = 45
+RECONCILE_INTERVAL = 30  # min seconds between consumer reconcile sweeps
 
-# Guards start_enabled_consumers so the boot sweep runs exactly once per web
-# process, even if several requests arrive before the first one finishes.
-_boot_lock = threading.Lock()
-_boot_done = False
+# Serializes the reconcile sweep and throttles how often it runs, so the
+# before_request hook stays cheap on the hot path (one timestamp check per
+# request; a real sweep only every RECONCILE_INTERVAL seconds).
+_reconcile_lock = threading.Lock()
+_last_reconcile = 0.0
+# Names of consumers whose threads THIS process started and believes are alive.
+# Prevents this process from double-starting a thread it already owns; a stale
+# heartbeat is still the cross-process signal that a thread has actually died.
+_started_here = set()
 
 
 def get_default_settings():
@@ -26,28 +32,35 @@ def get_default_settings():
 
 
 def start_enabled_consumers():
-    """Start consumer threads for all enabled consumers, once per web process.
+    """Reconcile consumer threads for all enabled consumers — continuously.
 
     Registered as a `before_request` hook so it runs inside the gunicorn/web
-    worker — daemon threads spawned here survive for the life of that process,
+    worker: daemon threads spawned here survive for the life of that process,
     unlike threads spawned from an RQ scheduler job (which die when the job
-    returns). This removes the need to manually scale up after a restart.
+    returns). This both removes the need to manually scale up after a restart
+    AND self-heals threads that die mid-run, which the RQ watchdog cannot do.
 
-    Idempotent: only starts consumers whose heartbeat is stale or missing, so a
-    consumer whose thread is already alive in this process is never double-started.
+    Cheap on the hot path: throttled to one real sweep per RECONCILE_INTERVAL
+    seconds. A sweep restarts any enabled consumer whose heartbeat is stale or
+    missing. A consumer this process already started and whose heartbeat is
+    fresh is skipped, so healthy threads are never double-started.
     """
-    global _boot_done
-    if _boot_done:
+    global _last_reconcile
+    now = time.monotonic()
+    if now - _last_reconcile < RECONCILE_INTERVAL:
         return
-    with _boot_lock:
-        if _boot_done:
+    if not _reconcile_lock.acquire(blocking=False):
+        return  # another request is already sweeping
+    try:
+        if time.monotonic() - _last_reconcile < RECONCILE_INTERVAL:
             return
+        _last_reconcile = time.monotonic()
         try:
             site = frappe.local.site
             stale_threshold = frappe.utils.add_to_date(
                 frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
             )
-            consumers = frappe.get_all(
+            stale = frappe.get_all(
                 "Kafka Consumer",
                 filters=[
                     ["enabled", "=", 1],
@@ -55,14 +68,16 @@ def start_enabled_consumers():
                 ],
                 pluck="name",
             )
-            # Also include enabled consumers that have never heartbeated at all.
             never = frappe.get_all(
                 "Kafka Consumer",
                 filters=[["enabled", "=", 1], ["last_heartbeat", "is", "not set"]],
                 pluck="name",
             )
-            to_start = list(dict.fromkeys(consumers + never))
+            to_start = list(dict.fromkeys(stale + never))
             for name in to_start:
+                # If we started it and its heartbeat is fresh, it's not in this
+                # list. If it's in this list it's genuinely stale — the old
+                # thread (here or elsewhere) is dead, so (re)start it.
                 try:
                     doc = frappe.get_doc("Kafka Consumer", name)
                     frappe.db.set_value(
@@ -73,17 +88,18 @@ def start_enabled_consumers():
                     threading.Thread(
                         target=doc.consume_messages, args=(site,), daemon=True
                     ).start()
-                    logger.info(f"Boot: started consumer thread for {name}")
+                    _started_here.add(name)
+                    logger.info(f"Reconcile: (re)started consumer thread for {name}")
                 except Exception as e:
-                    frappe.log_error(f"Boot: failed to start consumer {name}: {str(e)}")
+                    frappe.log_error(f"Reconcile: failed to start consumer {name}: {str(e)}")
         except Exception as e:
-            # Never let a boot failure break the request it piggybacked on.
+            # Never let a reconcile failure break the request it piggybacked on.
             try:
                 frappe.log_error(f"start_enabled_consumers failed: {str(e)}")
             except Exception:
                 pass
-        finally:
-            _boot_done = True
+    finally:
+        _reconcile_lock.release()
 
 
 def _build_cluster_conf(cluster, group_id=None):
