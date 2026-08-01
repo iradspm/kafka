@@ -268,6 +268,13 @@ class KafkaConsumer(Document):
                             frappe.db.commit()
                             last_heartbeat_tick = now
 
+                            # Re-decrypt credentials on the main thread (which has a DB
+                            # connection) so a re-saved password self-heals within one
+                            # heartbeat, even if a thread restart was missed. Workers read
+                            # self._cached_credentials lock-free; the attribute reassignment
+                            # is an atomic reference swap, so they never see a partial dict.
+                            self._cached_credentials = self._load_credentials()
+
                         # Drain up to 50 messages in one shot
                         msgs = consumer.consume(num_messages=50, timeout=1.0)
                         if not msgs:
@@ -290,7 +297,7 @@ class KafkaConsumer(Document):
                         }
 
                         # Wait for all, keep Kafka heartbeat alive while waiting
-                        results = []  # list of (msg, should_commit bool)
+                        results = []  # list of (msg, should_commit bool, api_response)
                         pending = set(futures)
                         while pending:
                             consumer.poll(0)
@@ -300,24 +307,37 @@ class KafkaConsumer(Document):
                             for future in done:
                                 msg = futures[future]
                                 try:
-                                    results.append((msg, future.result()))
+                                    should_commit, api_response = future.result()
+                                    results.append((msg, should_commit, api_response))
                                 except Exception as e:
                                     frappe.log_error(
-                                        f"Consumer {self.name}: unhandled error for "
-                                        f"offset {msg.offset()}: {str(e)}"
+                                        title=f"Consumer {self.name}: unhandled processing error",
+                                        message=f"offset {msg.offset()}: {str(e)}",
                                     )
-                                    results.append((msg, False))
+                                    results.append((msg, False, None))
 
                             if pending:
                                 time.sleep(0.05)
+
+                        # This thread has a live DB connection, so it is safe to write the
+                        # API responses to the Error Log here (worker threads are DB-free).
+                        for msg, ok, api_response in results:
+                            frappe.log_error(
+                                title=f"Consumer {self.name} API response",
+                                message=(
+                                    f"topic={msg.topic()} partition={msg.partition()} "
+                                    f"offset={msg.offset()}\nsuccess={ok}\nresponse={api_response!r}"
+                                ),
+                            )
+                        frappe.db.commit()
 
                         # Commit only offsets that were successfully handled (success or DLQ).
                         # Messages that returned False have no failure_topic and must be redelivered.
                         offsets_to_commit = [
                             TopicPartition(msg.topic(), msg.partition(), msg.offset() + 1)
-                            for msg, ok in results if ok
+                            for msg, ok, _ in results if ok
                         ]
-                        skipped = len([m for m, ok in results if not ok])
+                        skipped = len([m for m, ok, _ in results if not ok])
 
                         if offsets_to_commit:
                             consumer.commit(offsets=offsets_to_commit)
@@ -399,16 +419,21 @@ class KafkaConsumer(Document):
 
     def _process_message(self, msg):
         """Called in a thread-pool worker. Handles retry + produce/DLQ for one message.
-        Returns True if the offset should be committed, False if it should be redelivered.
+        Returns a (should_commit, api_response) tuple: should_commit is True if the
+        offset should be committed, False if it should be redelivered; api_response is
+        the raw API result (str/True/False) for the main thread to log.
 
         Worker threads are intentionally DB-free — credentials are pre-decrypted on
         the main thread and logging here uses the stdlib logger, not frappe.log_error
-        (which writes to the DB). This keeps the hot path off the database entirely."""
+        (which writes to the DB). The main thread persists api_response to the Error
+        Log. This keeps the hot path off the database entirely."""
         return self._process_message_inner(msg)
 
     def _process_message_inner(self, msg):
         message = msg.value().decode('utf-8')
-        response = self.call_api_endpoint(message)
+        logger.info(f"Consumer {self.name} received message at offset {msg.offset()}: {message}")
+        response, detail = self.call_api_endpoint(message)
+        logger.info(f"Consumer {self.name} API response for offset {msg.offset()}: {detail}")
 
         if response:
             if self.output_topic and isinstance(response, str):
@@ -417,23 +442,23 @@ class KafkaConsumer(Document):
                 f"Consumer {self.name}: processed offset {msg.offset()} "
                 f"partition {msg.partition()}"
             )
-            return True
+            return True, detail
 
         if self.failure_topic:
             # Always forward original payload — failure topic consumer processes it identically
             self._produce(self._producer, self.failure_topic, message)
             logger.error(
                 f"Consumer {self.name}: message at offset {msg.offset()} "
-                f"forwarded to failure topic '{self.failure_topic}'"
+                f"forwarded to failure topic '{self.failure_topic}' ({detail})"
             )
-            return True  # forwarded — safe to commit
+            return True, detail  # forwarded — safe to commit
 
         # No failure_topic: leave uncommitted so Kafka redelivers on next poll
         logger.error(
             f"Consumer {self.name}: no failure_topic set, leaving offset {msg.offset()} "
-            f"partition {msg.partition()} uncommitted for redelivery"
+            f"partition {msg.partition()} uncommitted for redelivery ({detail})"
         )
-        return False
+        return False, detail
 
     def _produce(self, producer, topic, value):
         try:
@@ -494,6 +519,11 @@ class KafkaConsumer(Document):
             return self._auth_token
 
     def call_api_endpoint(self, message):
+        """Return (result, detail):
+          result — truthy on success (response text, or True if body empty),
+                   False on any failure. Drives commit + output_topic logic.
+          detail — human-readable string (status + body, or the error) for the
+                   Error Log so failures are diagnosable instead of a bare False."""
         try:
             headers = {'Content-Type': 'application/json'}
             creds = self._cached_credentials
@@ -505,7 +535,7 @@ class KafkaConsumer(Document):
 
             elif self.api_key:
                 headers['Authorization'] = f"Bearer {self.api_key}"
-
+            frappe.log_error("Header", f"Consumer {self.name} calling API with headers: {headers}")
             response = self._session.post(
                 self.api_endpoint,
                 data=message.encode("utf-8"),
@@ -513,16 +543,20 @@ class KafkaConsumer(Document):
                 timeout=10
             )
             response_status = response.status_code
+            detail = f"HTTP {response_status}: {response.text}"
             if response_status in [200, 201, 202]:
                 logger.info(f"API call successful for consumer {self.name}: {self.api_endpoint} {response_status}")
-                return response.text if response.text else True
-            return False
+                return (response.text if response.text else True), detail
+            logger.warning(f"API call failed for consumer {self.name} - {detail}")
+            return False, detail
         except requests.exceptions.Timeout:
-            logger.info(f"API call failed for consumer {self.name} - Timeout")
-            return False
+            detail = "Timeout after 10s"
+            logger.warning(f"API call failed for consumer {self.name} - {detail}")
+            return False, detail
         except Exception as e:
-            logger.info(f"API call failed for consumer {self.name} - {str(e)}")
-            return False
+            detail = f"{type(e).__name__}: {str(e)}"
+            logger.warning(f"API call failed for consumer {self.name} - {detail}")
+            return False, detail
 
     def generate_hie_auth_token(self, consumer_key, consumer_secret):
         now = int(time.time())

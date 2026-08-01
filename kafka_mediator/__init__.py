@@ -15,9 +15,75 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_STALE_SECONDS = 45
 
+# Guards start_enabled_consumers so the boot sweep runs exactly once per web
+# process, even if several requests arrive before the first one finishes.
+_boot_lock = threading.Lock()
+_boot_done = False
+
 
 def get_default_settings():
     return frappe.get_doc("Kafka Settings")
+
+
+def start_enabled_consumers():
+    """Start consumer threads for all enabled consumers, once per web process.
+
+    Registered as a `before_request` hook so it runs inside the gunicorn/web
+    worker — daemon threads spawned here survive for the life of that process,
+    unlike threads spawned from an RQ scheduler job (which die when the job
+    returns). This removes the need to manually scale up after a restart.
+
+    Idempotent: only starts consumers whose heartbeat is stale or missing, so a
+    consumer whose thread is already alive in this process is never double-started.
+    """
+    global _boot_done
+    if _boot_done:
+        return
+    with _boot_lock:
+        if _boot_done:
+            return
+        try:
+            site = frappe.local.site
+            stale_threshold = frappe.utils.add_to_date(
+                frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
+            )
+            consumers = frappe.get_all(
+                "Kafka Consumer",
+                filters=[
+                    ["enabled", "=", 1],
+                    ["last_heartbeat", "<", stale_threshold],
+                ],
+                pluck="name",
+            )
+            # Also include enabled consumers that have never heartbeated at all.
+            never = frappe.get_all(
+                "Kafka Consumer",
+                filters=[["enabled", "=", 1], ["last_heartbeat", "is", "not set"]],
+                pluck="name",
+            )
+            to_start = list(dict.fromkeys(consumers + never))
+            for name in to_start:
+                try:
+                    doc = frappe.get_doc("Kafka Consumer", name)
+                    frappe.db.set_value(
+                        "Kafka Consumer", name, "thread_status", "restarting",
+                        update_modified=False,
+                    )
+                    frappe.db.commit()
+                    threading.Thread(
+                        target=doc.consume_messages, args=(site,), daemon=True
+                    ).start()
+                    logger.info(f"Boot: started consumer thread for {name}")
+                except Exception as e:
+                    frappe.log_error(f"Boot: failed to start consumer {name}: {str(e)}")
+        except Exception as e:
+            # Never let a boot failure break the request it piggybacked on.
+            try:
+                frappe.log_error(f"start_enabled_consumers failed: {str(e)}")
+            except Exception:
+                pass
+        finally:
+            _boot_done = True
 
 
 def _build_cluster_conf(cluster, group_id=None):

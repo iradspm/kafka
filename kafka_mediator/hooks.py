@@ -220,7 +220,10 @@ scheduler_events = {
 
 # Request Events
 # ----------------
-# before_request = ["kafka_mediator.utils.before_request"]
+# Runs in the gunicorn web worker. start_enabled_consumers is guarded to run
+# exactly once per process, spawning consumer threads that survive for the life
+# of the web worker (threads started from RQ scheduler jobs die when the job ends).
+before_request = ["kafka_mediator.start_enabled_consumers"]
 # after_request = ["kafka_mediator.utils.after_request"]
 
 # Job Events
