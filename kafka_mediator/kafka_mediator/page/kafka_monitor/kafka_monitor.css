@@ -1,8 +1,28 @@
 /* ═══════════════════════════════════════════
    Kafka Monitor — Dashboard Styles
+   Design tokens ported from shadcn/ui (neutral theme): hairline borders,
+   near-flat surfaces, muted foregrounds, ~10px radius. Because the rules below
+   already read --card-bg / --border-color / --text-muted etc., overriding those
+   here re-skins the whole page in the shadcn palette in one place.
    ═══════════════════════════════════════════ */
 
 .kafka-monitor {
+  /* shadcn neutral tokens (light) */
+  --ring: #0a0a0a1a;
+  --primary: #18181b;
+  --primary-fg: #fafafa;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
+  --radius: 10px;
+
+  /* Remap the page's existing variable names to shadcn neutrals */
+  --bg-color: #f9f9fb;          /* app background */
+  --card-bg: #ffffff;           /* card / surface */
+  --border-color: #e4e4e7;      /* zinc-200, hairline */
+  --subtle-fg: #f4f4f5;         /* zinc-100, hover/track */
+  --text-color: #3f3f46;        /* zinc-700 body */
+  --heading-color: #18181b;     /* zinc-900 headings */
+  --text-muted: #71717a;        /* zinc-500 muted */
+
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -10,11 +30,27 @@
   /* Grow with content and let the page scroll naturally instead of locking
      everything into one viewport (which cramped the topics table). */
   min-height: 100%;
-  background: var(--bg-color, #f4f5f7);
+  background: var(--bg-color);
   font-family: var(--font-stack, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   font-size: 13px;
-  color: var(--text-color, #1a1a2e);
+  color: var(--text-color);
+  letter-spacing: -0.006em;
 }
+
+/* shadcn neutral tokens (dark) — Frappe sets [data-theme="dark"] on a parent. */
+[data-theme="dark"] .kafka-monitor {
+  --primary: #fafafa;
+  --primary-fg: #18181b;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+  --bg-color: #09090b;          /* zinc-950 */
+  --card-bg: #18181b;           /* zinc-900 surface */
+  --border-color: #27272a;      /* zinc-800 hairline */
+  --subtle-fg: #27272a;         /* hover/track */
+  --text-color: #d4d4d8;        /* zinc-300 body */
+  --heading-color: #fafafa;     /* near-white headings */
+  --text-muted: #a1a1aa;        /* zinc-400 muted */
+}
+[data-theme="dark"] .km-kpi:hover { border-color: #3f3f46; }
 
 /* Ensure the desk's main section actually scrolls this page's overflow. */
 .kafka-monitor,
@@ -25,11 +61,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--card-bg, #fff);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 10px);
   padding: 12px 18px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  box-shadow: var(--shadow-sm);
   flex-shrink: 0;
 }
 
@@ -45,14 +81,15 @@
   position: relative;
   width: 40px;
   height: 40px;
-  border-radius: 11px;
+  border-radius: var(--radius, 10px);
+  /* Brand color retained (indigo→violet), on the shadcn-neutral chrome. */
   background: linear-gradient(140deg, #6366f1 0%, #7c3aed 55%, #9333ea 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(99, 70, 229, .35), inset 0 1px 0 rgba(255,255,255,.25);
+  box-shadow: 0 2px 8px rgba(99, 70, 229, .30), inset 0 1px 0 rgba(255,255,255,.25);
   overflow: hidden;
 }
 
@@ -61,7 +98,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(120% 120% at 20% 10%, rgba(255,255,255,.35), transparent 55%);
+  background: radial-gradient(120% 120% at 20% 10%, rgba(255,255,255,.30), transparent 55%);
   pointer-events: none;
 }
 
@@ -138,25 +175,35 @@
 
 .km-countdown { color: #4ade80; }
 
-/* Buttons */
+/* Buttons — shadcn "outline" variant by default (hairline, subtle hover). */
 .km-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
-  background: var(--card-bg, #fff);
-  color: var(--text-color, #374151);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-color);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all .15s;
+  transition: background .15s, border-color .15s, box-shadow .15s;
   padding: 6px 12px;
   height: 32px;
+  box-shadow: var(--shadow-sm);
 }
-.km-btn:hover { background: var(--subtle-fg, #f3f4f6); border-color: #9ca3af; }
+.km-btn:hover { background: var(--subtle-fg); }
+.km-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring, #0a0a0a1a); }
 .km-btn-icon { padding: 0; width: 32px; }
+
+/* Primary button — brand indigo retained, shadcn button shape/focus. */
+#km-sync-btn {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+}
+#km-sync-btn:hover { background: #4338ca; border-color: #4338ca; }
 
 .km-spinning { animation: km-spin .7s linear infinite; }
 @keyframes km-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -170,39 +217,25 @@
 }
 
 .km-kpi {
-  background: var(--card-bg, #fff);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 10px);
   padding: 16px 18px;
   display: flex;
   align-items: center;
   gap: 14px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.05);
-  transition: box-shadow .15s, transform .15s;
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s, box-shadow .15s;
   position: relative;
   overflow: hidden;
 }
 
-.km-kpi::before {
-  content: "";
-  position: absolute;
-  top: 0; left: 0;
-  width: 3px;
-  height: 100%;
-  border-radius: 10px 0 0 10px;
-}
-
-.km-kpi:hover { box-shadow: 0 4px 12px rgba(0,0,0,.1); transform: translateY(-1px); }
-
-.km-kpi-blue::before  { background: #4f46e5; }
-.km-kpi-green::before { background: #16a34a; }
-.km-kpi-orange::before{ background: #ea580c; }
-.km-kpi-purple::before{ background: #7c3aed; }
-.km-kpi-teal::before  { background: #0891b2; }
+/* shadcn cards are flat: no accent bar, just a hairline that warms on hover. */
+.km-kpi:hover { border-color: #d4d4d8; box-shadow: 0 2px 6px rgba(0,0,0,.06); }
 
 .km-kpi-icon {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -210,28 +243,31 @@
   flex-shrink: 0;
 }
 
-.km-kpi-blue   .km-kpi-icon { background: #ede9fe; color: #4f46e5; }
-.km-kpi-green  .km-kpi-icon { background: #dcfce7; color: #16a34a; }
+/* Muted, low-chroma accent tints in shadcn's spirit (subtle, not saturated). */
+.km-kpi-blue   .km-kpi-icon { background: #eef2ff; color: #4f46e5; }
+.km-kpi-green  .km-kpi-icon { background: #f0fdf4; color: #16a34a; }
 .km-kpi-orange .km-kpi-icon { background: #fff7ed; color: #ea580c; }
-.km-kpi-purple .km-kpi-icon { background: #f5f3ff; color: #7c3aed; }
-.km-kpi-teal   .km-kpi-icon { background: #e0f2fe; color: #0891b2; }
+.km-kpi-purple .km-kpi-icon { background: #faf5ff; color: #7c3aed; }
+.km-kpi-teal   .km-kpi-icon { background: #ecfeff; color: #0891b2; }
 
 .km-kpi-body { flex: 1; min-width: 0; }
 
 .km-kpi-value {
   font-size: 22px;
-  font-weight: 800;
-  color: var(--heading-color, #111827);
+  font-weight: 700;
+  color: var(--heading-color);
   line-height: 1;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;   /* aligned digits, like shadcn stat blocks */
+  letter-spacing: -0.02em;
 }
 
 .km-kpi-label {
   font-size: 11px;
-  color: var(--text-muted, #6b7280);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .05em;
   font-weight: 500;
@@ -250,7 +286,7 @@
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .km-card-header {
@@ -324,7 +360,7 @@
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
   transition: flex .25s ease;
@@ -456,7 +492,7 @@
   border-radius: 10px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+  box-shadow: var(--shadow-sm);
   transition: width .25s ease, opacity .2s ease;
   flex-shrink: 0;
 }
