@@ -212,17 +212,32 @@ def list_consumers(**kwargs):
 @frappe.whitelist()
 @validate_payload("topic_name", "consumer_group")
 def scale_up_consumer(**kwargs):
-    """Add another consumer instance to an existing group."""
+    """Add another consumer instance to an existing group.
+
+    Reuses an existing disabled consumer doc if one is available (re-enabling it
+    and starting its thread so it rejoins the Kafka group), and only inserts a
+    brand-new doc when the group has no spare disabled instance. This avoids the
+    doc sprawl and repeated credential-copying of always inserting.
+
+    The effective cap is min(max_consumers, topic partitions): a consumer group
+    can never use more consumers than the topic has partitions — extras sit idle.
+    """
     payload = kwargs
     payload.pop("cmd", None)
 
     topic_name     = payload.get("topic_name").strip().lower()
     consumer_group = payload.get("consumer_group").strip()
 
-    # Get config from an existing consumer in the group
+    # Config source — prefer an enabled consumer, but fall back to any consumer
+    # in the group (all may be disabled after a reset, yet still valid to scale).
     existing = frappe.db.get_value(
         "Kafka Consumer",
         {"topic": topic_name, "consumer_group": consumer_group, "enabled": 1},
+        ["name", "cluster", "api_endpoint", "api_username", "output_topic", "failure_topic"],
+        as_dict=True
+    ) or frappe.db.get_value(
+        "Kafka Consumer",
+        {"topic": topic_name, "consumer_group": consumer_group},
         ["name", "cluster", "api_endpoint", "api_username", "output_topic", "failure_topic"],
         as_dict=True
     )
@@ -231,24 +246,60 @@ def scale_up_consumer(**kwargs):
         return format_response(
             status_code=404,
             message=(
-                f"No active consumer found for topic '{topic_name}' in group '{consumer_group}'. "
+                f"No consumer found for topic '{topic_name}' in group '{consumer_group}'. "
                 f"Use create_consumer to register the first instance for this group."
             )
         )
 
-    existing_count = frappe.db.count("Kafka Consumer", {
+    enabled_count = frappe.db.count("Kafka Consumer", {
         "topic": topic_name,
         "consumer_group": consumer_group,
         "enabled": 1
     })
 
     settings = get_default_settings()
-    if existing_count >= (settings.max_consumers or 6):
+    # Never provision more consumers than the topic has partitions.
+    num_partitions = frappe.db.get_value(
+        "Kafka Topic", {"topic_name": topic_name}, "num_partitions"
+    ) or (settings.max_consumers or 6)
+    cap = min(settings.max_consumers or 6, num_partitions)
+
+    if enabled_count >= cap:
         return format_response(
             status_code=400,
-            message=f"Already at max consumers ({existing_count}) for this group."
+            message=(
+                f"Already at capacity ({enabled_count}/{cap}) for group "
+                f"'{consumer_group}'. Topic has {num_partitions} partition(s); "
+                f"additional consumers would sit idle."
+            )
         )
 
+    # Reuse a disabled doc if one exists — re-enable it and start its thread so
+    # it rejoins the Kafka group, rather than creating another near-identical doc.
+    reusable = frappe.db.get_value(
+        "Kafka Consumer",
+        {"topic": topic_name, "consumer_group": consumer_group, "enabled": 0},
+        "name",
+    )
+    if reusable:
+        try:
+            frappe.db.set_value(
+                "Kafka Consumer", reusable,
+                {"enabled": 1, "thread_status": "restarting",
+                 "last_heartbeat": None, "assigned_partitions": "[]"},
+                update_modified=False,
+            )
+            frappe.db.commit()
+            frappe.get_doc("Kafka Consumer", reusable).restart_consumer_thread()
+            return format_response(
+                status_code=200,
+                message=f"Scaled up to {enabled_count + 1} consumer(s) for group '{consumer_group}' (re-enabled {reusable}).",
+                data={"consumer_id": reusable, "total_instances": enabled_count + 1, "reused": True},
+            )
+        except Exception as e:
+            return format_response(status_code=500, message=f"Failed to re-enable {reusable}: {str(e)}")
+
+    # No spare disabled doc — create a new one, copying config from the source.
     source_name = existing.name
     source_full = frappe.db.get_value(
         "Kafka Consumer", source_name,
@@ -292,8 +343,8 @@ def scale_up_consumer(**kwargs):
 
         return format_response(
             status_code=200,
-            message=f"Scaled up to {existing_count + 1} consumers for group '{consumer_group}'.",
-            data={"consumer_id": consumer.name, "total_instances": existing_count + 1}
+            message=f"Scaled up to {enabled_count + 1} consumer(s) for group '{consumer_group}' (created {consumer.name}).",
+            data={"consumer_id": consumer.name, "total_instances": enabled_count + 1, "reused": False}
         )
     except Exception as e:
         return format_response(status_code=500, message=str(e))
