@@ -6,13 +6,19 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 20px 24px 12px;
+  padding: 20px 24px 24px;
+  /* Grow with content and let the page scroll naturally instead of locking
+     everything into one viewport (which cramped the topics table). */
   min-height: 100%;
   background: var(--bg-color, #f4f5f7);
   font-family: var(--font-stack, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   font-size: 13px;
   color: var(--text-color, #1a1a2e);
 }
+
+/* Ensure the desk's main section actually scrolls this page's overflow. */
+.kafka-monitor,
+.kafka-monitor * { scrollbar-width: thin; }
 
 /* ── Top Bar ── */
 .km-topbar {
@@ -36,15 +42,40 @@
 .km-brand { display: flex; align-items: center; gap: 12px; }
 
 .km-brand-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: linear-gradient(140deg, #6366f1 0%, #7c3aed 55%, #9333ea 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
   flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(99, 70, 229, .35), inset 0 1px 0 rgba(255,255,255,.25);
+  overflow: hidden;
+}
+
+/* Soft top-left sheen for a bit of depth. */
+.km-brand-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 120% at 20% 10%, rgba(255,255,255,.35), transparent 55%);
+  pointer-events: none;
+}
+
+.km-brand-glyph { position: relative; z-index: 1; }
+
+/* Gently pulse the central broker node to echo the "live" feel. */
+.km-brand-glyph circle[fill="currentColor"] {
+  transform-origin: 12px 12px;
+  animation: km-node-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes km-node-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .65; transform: scale(.82); }
 }
 
 .km-brand-title {
@@ -252,12 +283,39 @@
 
 .km-chart-container .frappe-chart { margin: 0 auto; }
 
+/* Kill frappe-charts' grow/transition animation so bars & labels don't
+   re-animate on every auto-refresh. Covers both the CSS transitions on the
+   bar/line marks and the SMIL <animate> elements the library injects. */
+.km-chart-container .frappe-chart *,
+.km-chart-container .frappe-chart .dataset-units,
+.km-chart-container .frappe-chart .bar,
+.km-chart-container .frappe-chart path {
+  transition: none !important;
+  animation: none !important;
+}
+.km-chart-container .frappe-chart animate,
+.km-chart-container .frappe-chart animateTransform {
+  display: none !important;
+}
+
+/* Keep x-axis (topic) labels upright, compact and readable. frappe-charts has
+   no rotation option, so long labels otherwise render cramped/skewed. */
+.km-chart-container .frappe-chart .x.axis text {
+  font-size: 10px;
+  fill: var(--text-muted, #64748b);
+}
+.km-chart-container .frappe-chart .axis text,
+.km-chart-container .frappe-chart .chart-label {
+  font-family: var(--font-stack, -apple-system, "Segoe UI", sans-serif);
+}
+
 /* ── Main Row: Table + Panel ── */
 .km-main-row {
   display: flex;
   gap: 12px;
-  flex: 1;
-  min-height: 0;
+  /* Size to content (with a floor) so the whole page scrolls, rather than
+     forcing this row to fill the viewport and squashing the table. */
+  min-height: 320px;
 }
 
 .km-table-card {
@@ -274,7 +332,10 @@
 
 .km-table-narrow { flex: 0 0 54% !important; }
 
-.km-table-scroll { flex: 1; overflow-y: auto; }
+/* Table scrolls internally once it exceeds a comfortable height, so a huge
+   topic list doesn't push the rest of the page miles down — but short lists
+   stay compact. */
+.km-table-scroll { flex: 1; overflow-y: auto; max-height: 60vh; }
 
 .km-table {
   width: 100%;
@@ -447,6 +508,7 @@
 .km-panel-body {
   flex: 1;
   overflow-y: auto;
+  max-height: 60vh;
   padding: 16px;
 }
 
@@ -594,6 +656,7 @@
 /* ── Sites card ── */
 #km-sites-card { margin-top: 4px; }
 #km-sites-card .km-card-header { gap: 8px; }
+#km-sites-card .km-table-scroll { max-height: 42vh; }
 
 #km-sites-card .km-table tbody tr:hover { background: #f0fdf4; }
 
@@ -682,6 +745,21 @@
   color: #ef4444 !important;
   background: #fee2e2 !important;
 }
+
+/* ── Scrollbars ── */
+.km-table-scroll::-webkit-scrollbar,
+.km-panel-body::-webkit-scrollbar { width: 8px; height: 8px; }
+.km-table-scroll::-webkit-scrollbar-thumb,
+.km-panel-body::-webkit-scrollbar-thumb {
+  background: var(--border-color, #cbd5e1);
+  border-radius: 8px;
+}
+.km-table-scroll::-webkit-scrollbar-thumb:hover,
+.km-panel-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted, #94a3b8);
+}
+.km-table-scroll::-webkit-scrollbar-track,
+.km-panel-body::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Footer ── */
 .km-footer {

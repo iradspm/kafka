@@ -318,47 +318,72 @@ var KafkaMonitor = {
         return '<span class="km-status-pill ' + pill_cls + '"><span class="km-dot ' + dot_cls + '"></span>' + s + '</span>';
     },
 
+    // Cache the label set so we only rebuild a chart when the topics actually
+    // change; otherwise we update values in place — this stops the grow-from-zero
+    // animation (and the skewed-label flicker) from replaying on every refresh.
+    _chart_labels_key: null,
+
     _render_charts: function (topics) {
         if (!topics.length) return;
         var labels = topics.map(function (t) {
-            return t.topic_name.length > 18 ? t.topic_name.slice(0, 16) + "…" : t.topic_name;
+            return t.topic_name.length > 14 ? t.topic_name.slice(0, 12) + "…" : t.topic_name;
         });
+        var full_names = topics.map(function (t) { return t.topic_name; });
         var msg_values = topics.map(function (t) { return t.message_count || 0; });
         var lag_values = topics.map(function (t) { return t.lag || 0; });
+        var labels_key = labels.join("|");
+        var labels_changed = labels_key !== this._chart_labels_key;
+
+        // Map a (possibly truncated) label back to its full topic name for tooltips.
+        var full_by_label = {};
+        labels.forEach(function (l, i) { full_by_label[l] = full_names[i]; });
+        var tipX = function (d) { return full_by_label[d] || d; };
 
         var bar_el = this.$("#km-bar-chart")[0];
         if (bar_el) {
-            bar_el.innerHTML = "";
-            this.bar_chart = null;
-            try {
-                this.bar_chart = new frappe.Chart(bar_el, {
-                    type: "bar",
-                    height: 160,
-                    data: { labels: labels, datasets: [{ name: "Messages", values: msg_values, chartType: "bar" }] },
-                    colors: ["#4f46e5"],
-                    axisOptions: { xAxisMode: "tick", xIsSeries: true },
-                    barOptions: { spaceRatio: 0.5 },
-                    tooltipOptions: { formatTooltipX: function (d) { return d; }, formatTooltipY: function (d) { return KafkaMonitor.fmt_num(d); } }
-                });
-            } catch (e) { bar_el.innerHTML = '<p style="padding:20px;color:#94a3b8;font-size:12px">Chart unavailable</p>'; }
+            if (this.bar_chart && !labels_changed) {
+                try { this.bar_chart.update({ labels: labels, datasets: [{ name: "Messages", values: msg_values, chartType: "bar" }] }); }
+                catch (e) { this.bar_chart = null; }
+            }
+            if (!this.bar_chart) {
+                bar_el.innerHTML = "";
+                try {
+                    this.bar_chart = new frappe.Chart(bar_el, {
+                        type: "bar",
+                        height: 170,
+                        data: { labels: labels, datasets: [{ name: "Messages", values: msg_values, chartType: "bar" }] },
+                        colors: ["#4f46e5"],
+                        axisOptions: { xAxisMode: "tick", xIsSeries: true },
+                        barOptions: { spaceRatio: 0.5 },
+                        tooltipOptions: { formatTooltipX: tipX, formatTooltipY: function (d) { return KafkaMonitor.fmt_num(d); } }
+                    });
+                } catch (e) { bar_el.innerHTML = '<p style="padding:20px;color:#94a3b8;font-size:12px">Chart unavailable</p>'; }
+            }
         }
 
         var lag_el = this.$("#km-lag-chart")[0];
         if (lag_el) {
-            lag_el.innerHTML = "";
-            this.lag_chart = null;
-            try {
-                this.lag_chart = new frappe.Chart(lag_el, {
-                    type: "bar",
-                    height: 160,
-                    data: { labels: labels, datasets: [{ name: "Lag", values: lag_values, chartType: "bar" }] },
-                    colors: ["#ea580c"],
-                    axisOptions: { xAxisMode: "tick", xIsSeries: true },
-                    barOptions: { spaceRatio: 0.5 },
-                    tooltipOptions: { formatTooltipX: function (d) { return d; }, formatTooltipY: function (d) { return d; } }
-                });
-            } catch (e) { lag_el.innerHTML = '<p style="padding:20px;color:#94a3b8;font-size:12px">Chart unavailable</p>'; }
+            if (this.lag_chart && !labels_changed) {
+                try { this.lag_chart.update({ labels: labels, datasets: [{ name: "Lag", values: lag_values, chartType: "bar" }] }); }
+                catch (e) { this.lag_chart = null; }
+            }
+            if (!this.lag_chart) {
+                lag_el.innerHTML = "";
+                try {
+                    this.lag_chart = new frappe.Chart(lag_el, {
+                        type: "bar",
+                        height: 170,
+                        data: { labels: labels, datasets: [{ name: "Lag", values: lag_values, chartType: "bar" }] },
+                        colors: ["#ea580c"],
+                        axisOptions: { xAxisMode: "tick", xIsSeries: true },
+                        barOptions: { spaceRatio: 0.5 },
+                        tooltipOptions: { formatTooltipX: tipX, formatTooltipY: function (d) { return d; } }
+                    });
+                } catch (e) { lag_el.innerHTML = '<p style="padding:20px;color:#94a3b8;font-size:12px">Chart unavailable</p>'; }
+            }
         }
+
+        this._chart_labels_key = labels_key;
     },
 
     // ── Side Panel ────────────────────────────────────────────────────────────
