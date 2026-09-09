@@ -490,12 +490,24 @@ class KafkaConsumer(Document):
     def _load_credentials(self):
         creds = {"basic_header": None}
 
-        pwd = self.get_password("api_password", raise_exception=False)
-        consumer_key = self.get_password("api_consumer_key", raise_exception=False)
-        consumer_secret = self.get_password("api_consumer_secret", raise_exception=False)
+        username = (self.api_username or "").strip()
+        pwd = self.get_password("api_password", raise_exception=False) or ""
+        consumer_key = self.get_password("api_consumer_key", raise_exception=False) or ""
+        consumer_secret = self.get_password("api_consumer_secret", raise_exception=False) or ""
 
-        if self.api_username and pwd:
-            auth_str = f"{self.api_username}:{pwd}"
+        pwd = pwd.strip()
+        consumer_key = consumer_key.strip()
+        consumer_secret = consumer_secret.strip()
+
+        if username and pwd:
+            if ":" in username:
+                frappe.log_error(
+                    title=f"Consumer {self.name}: invalid API username",
+                    message="api_username must not contain a colon (:) — "
+                            "the colon is the Basic-auth delimiter and will corrupt "
+                            "the Authorization header.",
+                )
+            auth_str = f"{username}:{pwd}"
             creds["basic_header"] = "Basic " + base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
         elif consumer_key and consumer_secret:
             creds["consumer_key"] = consumer_key
@@ -535,7 +547,17 @@ class KafkaConsumer(Document):
 
             elif self.api_key:
                 headers['Authorization'] = f"Bearer {self.api_key}"
-            frappe.log_error("Header", f"Consumer {self.name} calling API with headers: {headers}")
+            auth_header = headers.get("Authorization", "NOT SET")
+            auth_preview = auth_header[:12] + "..." if len(auth_header) > 12 else auth_header
+            frappe.log_error(
+                title=f"Consumer {self.name}: API request debug",
+                message=(
+                    f"Endpoint: {self.api_endpoint}\n"
+                    f"Auth scheme: {auth_header.split()[0] if ' ' in auth_header else 'N/A'}\n"
+                    f"Header length: {len(auth_header)} chars\n"
+                    f"Header preview: {auth_preview}"
+                ),
+            )
             response = self._session.post(
                 self.api_endpoint,
                 data=message.encode("utf-8"),
