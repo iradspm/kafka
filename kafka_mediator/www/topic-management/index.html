@@ -454,9 +454,12 @@
 
         <!-- Topics Table -->
         <div class="tm-card">
-            <div class="tm-card-header">
+            <div class="tm-card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <span class="tm-card-title">Topics</span>
                 <span class="tm-pill tm-pill-blue" id="tm-topic-count">0</span>
+                <div style="flex:1;min-width:150px;max-width:280px;margin-left:auto">
+                    <input type="text" id="tm-topic-search" placeholder="Search topics…" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+                </div>
             </div>
             <div class="tm-table-scroll">
                 <table class="tm-table">
@@ -475,6 +478,9 @@
                         <tr><td colspan="7" class="tm-empty">Loading topics…</td></tr>
                     </tbody>
                 </table>
+            </div>
+            <div id="tm-topics-load-more" style="display:none;text-align:center;padding:12px">
+                <button id="tm-topics-load-more-btn" class="tm-btn tm-btn-outline" style="font-size:13px;padding:6px 20px">Load More</button>
             </div>
         </div>
     </div>
@@ -589,9 +595,12 @@
 
         <!-- Consumers Table -->
         <div class="tm-card">
-            <div class="tm-card-header">
+            <div class="tm-card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <span class="tm-card-title">Consumers</span>
                 <span class="tm-pill tm-pill-blue" id="tm-consumer-count">0</span>
+                <div style="flex:1;min-width:150px;max-width:280px;margin-left:auto">
+                    <input type="text" id="tm-consumer-search" placeholder="Search by topic…" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+                </div>
             </div>
             <div class="tm-table-scroll">
                 <table class="tm-table">
@@ -612,6 +621,9 @@
                         <tr><td colspan="9" class="tm-empty">Loading consumers…</td></tr>
                     </tbody>
                 </table>
+            </div>
+            <div id="tm-consumers-load-more" style="display:none;text-align:center;padding:12px">
+                <button id="tm-consumers-load-more-btn" class="tm-btn tm-btn-outline" style="font-size:13px;padding:6px 20px">Load More</button>
             </div>
         </div>
     </div>
@@ -731,7 +743,7 @@
                 set_msg("tm-topic-form-msg", "Topic created successfully.", "#059669");
                 toast("Topic '" + name + "' created.", "green");
                 document.getElementById("tm-topic-name").value = "";
-                load_topics();
+                load_topics(true);
             } else {
                 set_msg("tm-topic-form-msg", res.message || "Creation failed.", "#dc2626");
                 toast(res.message || "Failed to create topic.", "red");
@@ -747,21 +759,54 @@
     // ── Load topics ─────────────────────────────────────────────────────
     var _topics_cache = [];
 
-    function load_topics() {
-        api_call("kafka_mediator.api.topic.list_topics").then(function (res) {
+    // ── Topics pagination ────────────────────────────────────────────────
+    var _topic_page = 0;
+    var _topic_page_size = 5;
+    var _topic_total = 0;
+    var _topic_loading = false;
+    var _topic_search = "";
+
+    function load_topics(reset) {
+        if (_topic_loading) return;
+        if (reset) { _topic_page = 0; _topic_total = 0; }
+
+        _topic_loading = true;
+        var $loadMore = document.getElementById("tm-topics-load-more");
+        var $loadBtn  = document.getElementById("tm-topics-load-more-btn");
+        $loadBtn.textContent = "Loading…";
+        $loadMore.style.display = "block";
+
+        api_call("kafka_mediator.api.topic.list_topics", {
+            start: _topic_page * _topic_page_size,
+            page_length: _topic_page_size,
+            search: _topic_search || ""
+        }).then(function (res) {
             var topics = res.data || [];
-            _topics_cache = topics;
-            document.getElementById("tm-topic-count").textContent = topics.length;
-
-            // Populate consumer comboboxes
-            _init_combo("tm-combo-consumer-topic", topics, false);
-            _init_combo("tm-combo-consumer-output", topics, true);
-            _init_combo("tm-combo-consumer-failure", topics, true);
-            _on_combo_select("tm-combo-consumer-topic", _update_consumer_cluster);
-
+            var pagination = res.pagination || {};
+            _topic_total = pagination.total || topics.length;
             var $tbody = document.getElementById("tm-topics-tbody");
-            if (!topics.length) {
+
+            // First page: replace comboboxes cache and rebuild
+            if (_topic_page === 0) {
+                _topics_cache = topics;
+                document.getElementById("tm-topic-count").textContent = _topic_total;
+                _init_combo("tm-combo-consumer-topic", topics, false);
+                _init_combo("tm-combo-consumer-output", topics, true);
+                _init_combo("tm-combo-consumer-failure", topics, true);
+                _on_combo_select("tm-combo-consumer-topic", _update_consumer_cluster);
+                $tbody.innerHTML = "";
+            } else {
+                // Append to cache for comboboxes
+                topics.forEach(function (t) { _topics_cache.push(t); });
+                _init_combo("tm-combo-consumer-topic", _topics_cache, false);
+                _init_combo("tm-combo-consumer-output", _topics_cache, true);
+                _init_combo("tm-combo-consumer-failure", _topics_cache, true);
+            }
+
+            if (!topics.length && _topic_page === 0) {
                 $tbody.innerHTML = '<tr><td colspan="7" class="tm-empty">No topics found. Create one above.</td></tr>';
+                $loadMore.style.display = "none";
+                _topic_loading = false;
                 return;
             }
 
@@ -779,13 +824,40 @@
                     + '<td style="color:#94a3b8;font-size:12px">' + last + '</td>'
                     + "</tr>";
             });
-            $tbody.innerHTML = html;
+            $tbody.insertAdjacentHTML("beforeend", html);
+
+            _topic_page++;
+            var loaded = _topic_page * _topic_page_size;
+            if (loaded >= _topic_total) {
+                $loadMore.style.display = "none";
+            } else {
+                $loadBtn.textContent = "Load More (" + loaded + "/" + _topic_total + ")";
+            }
+            _topic_loading = false;
         }).catch(function (e) {
             console.error("load_topics failed:", e);
-            document.getElementById("tm-topics-tbody").innerHTML =
-                '<tr><td colspan="7" class="tm-empty" style="color:#dc2626">Failed to load topics.</td></tr>';
+            _topic_loading = false;
+            $loadBtn.textContent = "Load More";
+            if (_topic_page === 0) {
+                document.getElementById("tm-topics-tbody").innerHTML =
+                    '<tr><td colspan="7" class="tm-empty" style="color:#dc2626">Failed to load topics.</td></tr>';
+            }
         });
     }
+
+    document.getElementById("tm-topics-load-more-btn").addEventListener("click", function () {
+        load_topics(false);
+    });
+
+    var _topic_search_timer = null;
+    document.getElementById("tm-topic-search").addEventListener("input", function () {
+        var val = this.value.trim();
+        clearTimeout(_topic_search_timer);
+        _topic_search_timer = setTimeout(function () {
+            _topic_search = val;
+            load_topics(true);
+        }, 300);
+    });
 
     // ── Searchable combobox ──────────────────────────────────────────────
     var _combo_instances = {};
@@ -1008,7 +1080,7 @@
                 _init_combo("tm-combo-consumer-topic", _topics_cache, false);
                 _init_combo("tm-combo-consumer-output", _topics_cache, true);
                 _init_combo("tm-combo-consumer-failure", _topics_cache, true);
-                load_consumers();
+                load_consumers(true);
             } else {
                 set_msg("tm-consumer-form-msg", res.message || "Creation failed.", "#dc2626");
                 toast(res.message || "Failed to create consumer.", "red");
@@ -1022,14 +1094,45 @@
     });
 
     // ── Load consumers ──────────────────────────────────────────────────
-    function load_consumers() {
-        api_call("kafka_mediator.api.consumer.list_consumers").then(function (res) {
-            var consumers = res.data || [];
-            document.getElementById("tm-consumer-count").textContent = consumers.length;
+    var _consumer_page = 0;
+    var _consumer_page_size = 5;
+    var _consumer_total = 0;
+    var _consumer_loading = false;
+    var _all_consumers_cache = [];
+    var _consumer_search = "";
 
+    function load_consumers(reset) {
+        if (_consumer_loading) return;
+        if (reset) { _consumer_page = 0; _consumer_total = 0; _all_consumers_cache = []; }
+
+        _consumer_loading = true;
+        var $loadMore = document.getElementById("tm-consumers-load-more");
+        var $loadBtn  = document.getElementById("tm-consumers-load-more-btn");
+        $loadBtn.textContent = "Loading…";
+        $loadMore.style.display = "block";
+
+        api_call("kafka_mediator.api.consumer.list_consumers", {
+            start: _consumer_page * _consumer_page_size,
+            page_length: _consumer_page_size,
+            search: _consumer_search || ""
+        }).then(function (res) {
+            var consumers = res.data || [];
+            var pagination = res.pagination || {};
+            _consumer_total = pagination.total || consumers.length;
             var $tbody = document.getElementById("tm-consumers-tbody");
-            if (!consumers.length) {
+
+            if (_consumer_page === 0) {
+                _all_consumers_cache = consumers;
+                document.getElementById("tm-consumer-count").textContent = _consumer_total;
+                $tbody.innerHTML = "";
+            } else {
+                consumers.forEach(function (c) { _all_consumers_cache.push(c); });
+            }
+
+            if (!consumers.length && _consumer_page === 0) {
                 $tbody.innerHTML = '<tr><td colspan="9" class="tm-empty">No consumers found. Create one above.</td></tr>';
+                $loadMore.style.display = "none";
+                _consumer_loading = false;
                 return;
             }
 
@@ -1050,7 +1153,9 @@
                     + '<td style="font-weight:500;font-size:12px" title="' + (c.name || "") + '">' + (c.name || "") + '</td>'
                     + '<td>' + (c.topic || "") + '</td>'
                     + '<td>' + (c.consumer_group || "") + '</td>'
-                    + '<td title="' + ep + '">' + ep_short + '</td>'
+                    + '<td title="' + ep + '" style="display:flex;align-items:center;gap:4px">' + ep_short
+                    +   '<button class="tm-copy-btn" data-copy="' + ep.replace(/"/g, '&quot;') + '" title="Copy endpoint" style="background:none;border:none;cursor:pointer;padding:2px;color:#94a3b8;font-size:12px;line-height:1">⧉</button>'
+                    + '</td>'
                     + '<td>' + (c.output_topic || '<span style="color:#cbd5e1">—</span>') + '</td>'
                     + '<td>' + (c.failure_topic || '<span style="color:#cbd5e1">—</span>') + '</td>'
                     + '<td class="tm-num">' + (c.current_lag || 0) + '</td>'
@@ -1063,7 +1168,7 @@
                     + '</td>'
                     + "</tr>";
             });
-            $tbody.innerHTML = html;
+            $tbody.insertAdjacentHTML("beforeend", html);
 
             // Bind toggle events
             $tbody.querySelectorAll(".tm-toggle-btn").forEach(function (el) {
@@ -1073,11 +1178,52 @@
                     toggle_consumer(consumer_id, is_enabled);
                 });
             });
+
+            // Bind copy endpoint buttons
+            $tbody.querySelectorAll(".tm-copy-btn").forEach(function (btn) {
+                btn.addEventListener("click", function (e) {
+                    e.stopPropagation();
+                    var text = btn.dataset.copy;
+                    if (navigator.clipboard) {
+                        navigator.clipboard.writeText(text).then(function () {
+                            btn.textContent = "✓";
+                            setTimeout(function () { btn.textContent = "⧉"; }, 1200);
+                        });
+                    }
+                });
+            });
+
+            _consumer_page++;
+            var loaded = _consumer_page * _consumer_page_size;
+            if (loaded >= _consumer_total) {
+                $loadMore.style.display = "none";
+            } else {
+                $loadBtn.textContent = "Load More (" + loaded + "/" + _consumer_total + ")";
+            }
+            _consumer_loading = false;
         }).catch(function () {
-            document.getElementById("tm-consumers-tbody").innerHTML =
-                '<tr><td colspan="9" class="tm-empty" style="color:#dc2626">Failed to load consumers.</td></tr>';
+            _consumer_loading = false;
+            $loadBtn.textContent = "Load More";
+            if (_consumer_page === 0) {
+                document.getElementById("tm-consumers-tbody").innerHTML =
+                    '<tr><td colspan="9" class="tm-empty" style="color:#dc2626">Failed to load consumers.</td></tr>';
+            }
         });
     }
+
+    document.getElementById("tm-consumers-load-more-btn").addEventListener("click", function () {
+        load_consumers(false);
+    });
+
+    var _consumer_search_timer = null;
+    document.getElementById("tm-consumer-search").addEventListener("input", function () {
+        var val = this.value.trim();
+        clearTimeout(_consumer_search_timer);
+        _consumer_search_timer = setTimeout(function () {
+            _consumer_search = val;
+            load_consumers(true);
+        }, 300);
+    });
 
     // ── Toggle consumer enable/disable ──────────────────────────────────
     function toggle_consumer(consumer_id, currently_enabled) {
@@ -1089,7 +1235,7 @@
             if (res.status_code === 200) {
                 var action = currently_enabled ? "disabled" : "enabled";
                 toast("Consumer '" + consumer_id + "' " + action + ".", "green");
-                load_consumers();
+                load_consumers(true);
             } else {
                 toast(res.message || "Toggle failed.", "red");
             }
@@ -1102,15 +1248,15 @@
     document.getElementById("tm-global-refresh").addEventListener("click", function () {
         var icon = document.getElementById("tm-refresh-icon");
         icon.classList.add("tm-spinning");
-        load_topics();
-        load_consumers();
+        load_topics(true);
+        load_consumers(true);
         setTimeout(function () { icon.classList.remove("tm-spinning"); }, 800);
     });
 
     // ── Initial load ────────────────────────────────────────────────────
     load_clusters();
-    load_topics();
-    load_consumers();
+    load_topics(true);
+    load_consumers(true);
 
 })();
 </script>

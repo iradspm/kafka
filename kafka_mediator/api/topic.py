@@ -569,18 +569,23 @@ def list_topics(**kwargs):
     payload.pop("cmd", None)
 
     cluster_name = (payload.get("cluster_name") or "").strip() or None
+    search = (payload.get("search") or "").strip() or None
+    start = int(payload.get("start") or 0)
+    page_length = int(payload.get("page_length") or 5)
 
-    filters = {}
+    filters = []
     if cluster_name:
         if not frappe.db.exists("Kafka Cluster", cluster_name):
             return format_response(
                 status_code=404,
                 message=f"Cluster '{cluster_name}' not found."
             )
-        filters["cluster"] = cluster_name
+        filters.append(["cluster", "=", cluster_name])
+    if search:
+        filters.append(["topic_name", "like", f"%{search}%"])
 
     try:
-        topics = frappe.get_all(
+        all_topics = frappe.get_all(
             "Kafka Topic",
             filters=filters,
             fields=[
@@ -589,22 +594,25 @@ def list_topics(**kwargs):
             ],
             order_by="creation desc"
         )
+        total = len(all_topics)
 
         # Fetch live lag from Kafka (same source as kafka-monitor)
         clusters_seen = {}
-        for t in topics:
+        for t in all_topics:
             c = t.get("cluster")
             if c and c not in clusters_seen:
                 clusters_seen[c] = True
 
         live_map = {}
-        for cluster_name in clusters_seen:
+        for cn in clusters_seen:
             try:
-                live = fetch_live_cluster_stats(cluster_name)
+                live = fetch_live_cluster_stats(cn)
                 for topic_name, ts in live.get("topics", {}).items():
                     live_map[topic_name] = ts
             except Exception:
                 pass
+
+        topics = all_topics[start:start + page_length]
 
         for topic in topics:
             topic["last_updated"] = str(topic["last_updated"]) if topic.get("last_updated") else None
@@ -618,8 +626,9 @@ def list_topics(**kwargs):
 
         return format_response(
             status_code=200,
-            message=f"{len(topics)} topic(s) found.",
-            data=topics
+            message=f"{total} topic(s) found.",
+            data=topics,
+            pagination={"total": total, "start": start, "page_length": page_length}
         )
 
     except Exception as e:

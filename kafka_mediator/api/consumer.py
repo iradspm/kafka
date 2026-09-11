@@ -183,17 +183,22 @@ def list_consumers(**kwargs):
     topic_name     = payload.get("topic_name", "").strip().lower() or None
     consumer_group = payload.get("consumer_group", "").strip() or None
     enabled        = payload.get("enabled")
+    search         = (payload.get("search") or "").strip() or None
+    start          = int(payload.get("start") or 0)
+    page_length    = int(payload.get("page_length") or 5)
 
-    filters = {}
+    filters = []
     if topic_name:
-        filters["topic"] = topic_name
+        filters.append(["topic", "=", topic_name])
     if consumer_group:
-        filters["consumer_group"] = consumer_group
+        filters.append(["consumer_group", "=", consumer_group])
     if enabled is not None:
-        filters["enabled"] = int(enabled)
+        filters.append(["enabled", "=", int(enabled)])
+    if search:
+        filters.append(["topic", "like", f"%{search}%"])
 
     try:
-        consumers = frappe.get_all(
+        all_consumers = frappe.get_all(
             "Kafka Consumer",
             filters=filters,
             fields=[
@@ -203,12 +208,15 @@ def list_consumers(**kwargs):
             ],
             order_by="creation desc"
         )
+        total = len(all_consumers)
+        consumers = all_consumers[start:start + page_length]
         for c in consumers:
             c["creation"] = str(c["creation"]) if c.get("creation") else None
         return format_response(
             status_code=200,
-            message=f"{len(consumers)} consumer(s) found.",
-            data=consumers
+            message=f"{total} consumer(s) found.",
+            data=consumers,
+            pagination={"total": total, "start": start, "page_length": page_length}
         )
     except Exception as e:
         return format_response(

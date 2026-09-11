@@ -18,6 +18,11 @@ var KafkaMonitor = {
     bar_chart: null,
     lag_chart: null,
     last_data: null,
+    _topic_page: 0,
+    _topic_page_size: 5,
+    _topic_total: 0,
+    _topic_search: "",
+    _all_topics_cache: [],
 
     init: function (wrapper) {
         this.wrapper = wrapper;
@@ -125,6 +130,21 @@ var KafkaMonitor = {
             self._toggle_expand($(this).data("target"));
         });
 
+        $(this.wrapper).on("click", "#km-topics-load-more-btn", function () {
+            self.load_more_topics();
+        });
+
+        var _km_search_timer = null;
+        $(this.wrapper).on("input", "#km-topic-search", function () {
+            var val = $(this).val().trim();
+            clearTimeout(_km_search_timer);
+            _km_search_timer = setTimeout(function () {
+                self._topic_search = val;
+                self._topic_page = 0;
+                if (self.last_data) self.render(self.last_data);
+            }, 300);
+        });
+
         $(this.wrapper).on("click", ".km-retention-btn", function (e) {
             e.stopPropagation();
             var $btn = $(this);
@@ -175,6 +195,7 @@ var KafkaMonitor = {
         if (!this.cluster) return;
         var self = this;
         self.$("#km-refresh-icon").addClass("km-spinning");
+        self._topic_page = 0;
 
         frappe.call({
             method: "kafka_mediator.api.topic.get_cluster_stats",
@@ -254,7 +275,18 @@ var KafkaMonitor = {
 
     // ── Render KPIs + table + charts ─────────────────────────────────────────
     render: function (data) {
-        var topics = data.topics || [];
+        var all_topics = data.topics || [];
+        this._all_topics_cache = all_topics;
+
+        // Filter by search
+        var search = this._topic_search.toLowerCase();
+        if (search) {
+            all_topics = all_topics.filter(function (t) {
+                return (t.topic_name || "").toLowerCase().indexOf(search) !== -1;
+            });
+        }
+        this._topic_total = all_topics.length;
+        this._filtered_topics = all_topics;
 
         // KPIs
         this.$("#km-kpi-topics").text(data.total_topics || 0);
@@ -262,7 +294,7 @@ var KafkaMonitor = {
 
         var lag = data.total_lag || 0;
         this.$("#km-kpi-lag").text(lag);
-        this.$("#km-kpi-lag-card").toggleClass("km-kpi-lag-alert", lag > 0);
+        this.$("#km-kpi-lag-card").toggleClass("km-lag-lag-alert", lag > 0);
 
         this.$("#km-kpi-consumers").text(data.total_consumers || 0);
         this.$("#km-kpi-status").html(
@@ -271,9 +303,18 @@ var KafkaMonitor = {
         );
 
         // Badge
-        this.$("#km-topic-count").text(topics.length);
+        this.$("#km-topic-count").text(this._topic_total);
 
-        // Table
+        // Table — first page
+        var topics = all_topics.slice(0, this._topic_page_size);
+        this._render_topic_table(topics);
+        this._update_load_more();
+
+        // Charts always use all topics (unfiltered)
+        this._render_charts(data.topics || []);
+    },
+
+    _render_topic_table: function (topics) {
         var $tbody = this.$("#km-topic-tbody").empty();
         if (!topics.length) {
             $tbody.html('<tr><td colspan="7" class="km-empty">No topics in this cluster.</td></tr>');
@@ -299,9 +340,26 @@ var KafkaMonitor = {
                 );
             });
         }
+    },
 
-        // Charts
-        this._render_charts(topics);
+    _update_load_more: function () {
+        var $wrap = this.$("#km-topics-load-more");
+        var $btn = this.$("#km-topics-load-more-btn");
+        var loaded = Math.min(this._topic_page * this._topic_page_size + this._topic_page_size, this._topic_total);
+        if (loaded >= this._topic_total || !this._topic_total) {
+            $wrap.hide();
+        } else {
+            $btn.text("Load More (" + loaded + "/" + this._topic_total + ")");
+            $wrap.show();
+        }
+    },
+
+    load_more_topics: function () {
+        this._topic_page++;
+        var all = this._filtered_topics || [];
+        var topics = all.slice(0, this._topic_page * this._topic_page_size + this._topic_page_size);
+        this._render_topic_table(topics);
+        this._update_load_more();
     },
 
     _status_pill: function (consumer_groups) {

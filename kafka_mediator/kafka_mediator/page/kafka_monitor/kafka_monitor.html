@@ -140,9 +140,12 @@
   <!-- Table + Panel -->
   <div class="km-main-row">
     <div class="km-table-card" id="km-table-wrap">
-      <div class="km-card-header">
+      <div class="km-card-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="km-card-title">Topics</span>
         <span class="km-badge" id="km-topic-count">0</span>
+        <div style="flex:1;min-width:150px;max-width:250px;margin-left:auto">
+          <input type="text" id="km-topic-search" placeholder="Search topics…" style="width:100%;padding:5px 9px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+        </div>
       </div>
       <div class="km-table-scroll"><table class="km-table">
         <thead>
@@ -160,6 +163,9 @@
           <tr><td colspan="7" class="km-empty">Select a cluster…</td></tr>
         </tbody>
       </table></div>
+      <div id="km-topics-load-more" style="display:none;text-align:center;padding:12px">
+        <button id="km-topics-load-more-btn" class="km-btn" style="font-size:13px;padding:6px 20px">Load More</button>
+      </div>
     </div>
 
     <!-- Side Panel -->

@@ -696,30 +696,19 @@ def fetch_live_topic_stats(topic_name):
             pass
 
 
+_live_stats_cache = {}  # {cluster_name: (timestamp, data)}
+LIVE_STATS_CACHE_TTL = 60  # seconds
+
+
 def fetch_live_cluster_stats(cluster_name):
     """
-    Fetch ALL stats directly from Kafka — no Frappe DB reads for topic or group lists.
-
-    Returns:
-      {
-        "topics": {
-          topic_name: {
-            "message_count": int,
-            "partition_count": int,
-            "replication_factor": int,
-            "lag_by_group": { group_id: int },
-            "total_lag": int,
-          }
-        },
-        "groups": {
-          group_id: {
-            "total_lag": int,
-            "member_count": int,   # live members registered in Kafka right now
-            "topics": [topic_name, ...],
-          }
-        }
-      }
+    Fetch ALL stats directly from Kafka — cached for LIVE_STATS_CACHE_TTL seconds.
     """
+    now = time.monotonic()
+    cached = _live_stats_cache.get(cluster_name)
+    if cached and (now - cached[0]) < LIVE_STATS_CACHE_TTL:
+        return cached[1]
+
     cluster = frappe.get_doc("Kafka Cluster", cluster_name)
     base_conf = _build_cluster_conf(cluster)
     stats_conf = _build_cluster_conf(cluster, group_id=f"kafka_mediator_live_stats_{cluster_name}")
@@ -873,7 +862,9 @@ def fetch_live_cluster_stats(cluster_name):
         except Exception:
             pass
 
-    return {"topics": topic_stats, "groups": group_stats}
+    result = {"topics": topic_stats, "groups": group_stats}
+    _live_stats_cache[cluster_name] = (time.monotonic(), result)
+    return result
 
 
 # ---------------------------------------------------------------------------
