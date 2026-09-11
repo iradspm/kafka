@@ -590,9 +590,39 @@ def list_topics(**kwargs):
             order_by="creation desc"
         )
 
+        # Fetch live lag from Kafka (same source as kafka-monitor)
+        clusters_seen = {}
+        for t in topics:
+            c = t.get("cluster")
+            if c and c not in clusters_seen:
+                clusters_seen[c] = True
+
+        live_map = {}
+        for cluster_name in clusters_seen:
+            try:
+                live = fetch_live_cluster_stats(cluster_name)
+                for topic_name, ts in live.get("topics", {}).items():
+                    live_map[topic_name] = ts
+            except Exception:
+                pass
+
         for topic in topics:
             topic["last_updated"] = str(topic["last_updated"]) if topic.get("last_updated") else None
             topic["creation"] = str(topic["creation"]) if topic.get("creation") else None
+            live = live_map.get(topic["topic_name"])
+            if live:
+                topic["message_count"] = live.get("message_count", topic.get("message_count", 0))
+                topic["lag"] = live.get("total_lag", topic.get("lag", 0))
+                topic["num_partitions"] = live.get("partition_count", topic.get("num_partitions"))
+                topic["replication_factor"] = live.get("replication_factor", topic.get("replication_factor", 1))
+                frappe.db.set_value("Kafka Topic", topic["topic_name"], {
+                    "message_count": topic["message_count"],
+                    "lag": topic["lag"],
+                    "num_partitions": topic["num_partitions"],
+                    "replication_factor": topic["replication_factor"],
+                    "last_updated": frappe.utils.now()
+                })
+        frappe.db.commit()
 
         return format_response(
             status_code=200,
