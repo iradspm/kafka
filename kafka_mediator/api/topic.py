@@ -615,14 +615,6 @@ def list_topics(**kwargs):
                 topic["lag"] = live.get("total_lag", topic.get("lag", 0))
                 topic["num_partitions"] = live.get("partition_count", topic.get("num_partitions"))
                 topic["replication_factor"] = live.get("replication_factor", topic.get("replication_factor", 1))
-                frappe.db.set_value("Kafka Topic", topic["topic_name"], {
-                    "message_count": topic["message_count"],
-                    "lag": topic["lag"],
-                    "num_partitions": topic["num_partitions"],
-                    "replication_factor": topic["replication_factor"],
-                    "last_updated": frappe.utils.now()
-                })
-        frappe.db.commit()
 
         return format_response(
             status_code=200,

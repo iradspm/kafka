@@ -84,7 +84,6 @@ def start_enabled_consumers():
                         "Kafka Consumer", name, "thread_status", "restarting",
                         update_modified=False,
                     )
-                    frappe.db.commit()
                     threading.Thread(
                         target=doc.consume_messages, args=(site,), daemon=True
                     ).start()
