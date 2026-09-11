@@ -75,9 +75,6 @@ def start_enabled_consumers():
             )
             to_start = list(dict.fromkeys(stale + never))
             for name in to_start:
-                # If we started it and its heartbeat is fresh, it's not in this
-                # list. If it's in this list it's genuinely stale — the old
-                # thread (here or elsewhere) is dead, so (re)start it.
                 try:
                     doc = frappe.get_doc("Kafka Consumer", name)
                     frappe.db.set_value(
@@ -91,6 +88,10 @@ def start_enabled_consumers():
                     logger.info(f"Reconcile: (re)started consumer thread for {name}")
                 except Exception as e:
                     frappe.log_error(f"Reconcile: failed to start consumer {name}: {str(e)}")
+            try:
+                frappe.db.commit()
+            except Exception:
+                pass
         except Exception as e:
             # Never let a reconcile failure break the request it piggybacked on.
             try:
