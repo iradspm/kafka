@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Topic Management — Kafka Mediator</title>
+    <script src="/assets/frappe/js/frappe-web.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'kafka': {
+                            '50':  '#eef2ff',
+                            '100': '#e0e7ff',
+                            '200': '#c7d2fe',
+                            '300': '#a5b4fc',
+                            '400': '#818cf8',
+                            '500': '#6366f1',
+                            '600': '#4f46e5',
+                            '700': '#4338ca',
+                            '800': '#3730a3',
+                            '900': '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --border-color: #e2e8f0;
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8fafc;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 0;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        /* ── Top bar ─────────────────────────────────────────────────── */
+        .tm-topbar {
+            background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+            color: #fff;
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(0,0,0,.18);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .tm-brand { display: flex; align-items: center; gap: 12px; }
+        .tm-brand-icon {
+            width: 36px; height: 36px;
+            background: rgba(255,255,255,.12);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .tm-brand-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+        .tm-brand-sub { font-size: 11px; color: rgba(255,255,255,.6); margin-top: 1px; }
+
+        /* ── Tabs ────────────────────────────────────────────────────── */
+        .tm-tabs {
+            display: flex;
+            gap: 0;
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0 24px;
+            position: sticky;
+            top: 64px;
+            z-index: 90;
+        }
+        .tm-tab {
+            padding: 12px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            transition: all .15s;
+        }
+        .tm-tab:hover { color: kafka-600; }
+        .tm-tab.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+
+        /* ── Content ─────────────────────────────────────────────────── */
+        .tm-content { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+        .tm-section { display: none; }
+        .tm-section.active { display: block; }
+
+        /* ── Cards ───────────────────────────────────────────────────── */
+        .tm-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.04);
+            margin-bottom: 20px;
+        }
+        .tm-card-header {
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .tm-card-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+        .tm-card-body { padding: 18px; }
+
+        /* ── Forms ────────────────────────────────────────────────────── */
+        .tm-form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 14px;
+        }
+        .tm-field { display: flex; flex-direction: column; gap: 4px; }
+        .tm-field label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .tm-field input, .tm-field select {
+            font-size: 13px;
+            padding: 7px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            transition: border-color .15s;
+            color: var(--text-primary);
+        }
+        .tm-field input:focus, .tm-field select:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79,70,229,.1);
+        }
+        .tm-field input::placeholder { color: #94a3b8; }
+        .tm-field-hint { font-size: 11px; color: var(--text-muted); }
+
+        /* ── Buttons ──────────────────────────────────────────────────── */
+        .tm-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all .15s;
+            white-space: nowrap;
+        }
+        .tm-btn:disabled { opacity: .55; cursor: not-allowed; }
+        .tm-btn-primary { background: #4f46e5; color: #fff; border-color: #4338ca; }
+        .tm-btn-primary:hover:not(:disabled) { background: #4338ca; }
+        .tm-btn-secondary { background: #fff; color: #475569; border-color: #cbd5e1; }
+        .tm-btn-secondary:hover:not(:disabled) { background: #f8fafc; border-color: #94a3b8; }
+        .tm-btn-danger { background: #fff; color: #dc2626; border-color: #fca5a5; }
+        .tm-btn-danger:hover:not(:disabled) { background: #fef2f2; border-color: #dc2626; }
+        .tm-btn-success { background: #fff; color: #059669; border-color: #6ee7b7; }
+        .tm-btn-success:hover:not(:disabled) { background: #ecfdf5; border-color: #059669; }
+        .tm-btn-sm { padding: 4px 10px; font-size: 12px; }
+
+        /* ── Tables ───────────────────────────────────────────────────── */
+        .tm-table-scroll { overflow-x: auto; }
+        .tm-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .tm-table th {
+            text-align: left;
+            padding: 10px 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            border-bottom: 2px solid var(--border-color);
+            white-space: nowrap;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+        }
+        .tm-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #f1f5f9;
+            color: var(--text-primary);
+            vertical-align: middle;
+        }
+        .tm-table tr:hover td { background: #f8fafc; }
+        .tm-empty {
+            text-align: center;
+            padding: 32px 16px;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+        .tm-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* ── Status pills ─────────────────────────────────────────────── */
+        .tm-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.5;
+        }
+        .tm-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .tm-pill-green  { background: #d1fae5; color: #065f46; }
+        .tm-dot-green   { background: #10b981; }
+        .tm-pill-red    { background: #fee2e2; color: #991b1b; }
+        .tm-dot-red     { background: #ef4444; }
+        .tm-pill-orange { background: #ffedd5; color: #9a3412; }
+        .tm-dot-orange  { background: #f97316; }
+        .tm-pill-grey   { background: #f1f5f9; color: #475569; }
+        .tm-dot-grey    { background: #94a3b8; }
+        .tm-pill-blue   { background: #dbeafe; color: #1e40af; }
+        .tm-dot-blue    { background: #3b82f6; }
+
+        /* ── Toggle switch ────────────────────────────────────────────── */
+        .tm-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .tm-toggle-track {
+            width: 34px; height: 18px;
+            background: #cbd5e1;
+            border-radius: 9px;
+            position: relative;
+            transition: background .2s;
+        }
+        .tm-toggle-track.on { background: #10b981; }
+        .tm-toggle-knob {
+            width: 14px; height: 14px;
+            background: #fff;
+            border-radius: 50%;
+            position: absolute;
+            top: 2px; left: 2px;
+            transition: transform .2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,.15);
+        }
+        .tm-toggle-track.on .tm-toggle-knob { transform: translateX(16px); }
+        .tm-toggle-label { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+
+        /* ── Toast alert (override frappe) ────────────────────────────── */
+        .tm-toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #fff;
+            z-index: 9999;
+            opacity: 0;
+            transform: translateY(12px);
+            transition: all .25s;
+            max-width: 420px;
+            box-shadow: 0 4px 14px rgba(0,0,0,.18);
+        }
+        .tm-toast.show { opacity: 1; transform: translateY(0); }
+        .tm-toast.green { background: #059669; }
+        .tm-toast.red   { background: #dc2626; }
+        .tm-toast.orange { background: #d97706; }
+
+        /* ── Searchable combobox ─────────────────────────────────────── */
+        .tm-combo { position: relative; }
+        .tm-combo-input {
+            font-size: 13px;
+            padding: 7px 10px;
+            padding-right: 28px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            width: 100%;
+            transition: border-color .15s;
+            color: var(--text-primary);
+        }
+        .tm-combo-input:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79,70,229,.1);
+        }
+        .tm-combo-input::placeholder { color: #94a3b8; }
+        .tm-combo-arrow {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            color: #94a3b8;
+        }
+        .tm-combo-list {
+            display: none;
+            position: absolute;
+            top: calc(100% + 2px);
+            left: 0;
+            right: 0;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            z-index: 200;
+            box-shadow: 0 4px 16px rgba(0,0,0,.12);
+        }
+        .tm-combo-list.open { display: block; }
+        .tm-combo-item {
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            color: var(--text-primary);
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .tm-combo-item:last-child { border-bottom: none; }
+        .tm-combo-item:hover { background: #f1f5f9; }
+        .tm-combo-item.selected { background: #e0e7ff; color: #4338ca; font-weight: 500; }
+        .tm-combo-empty {
+            padding: 12px;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-style: italic;
+            text-align: center;
+        }
+        .tm-combo-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 3px;
+        }
+
+        /* ── Loading spinner ──────────────────────────────────────────── */
+        @keyframes tm-spin { to { transform: rotate(360deg); } }
+        .tm-spinning { animation: tm-spin .8s linear infinite; }
+
+        /* ── Responsive ───────────────────────────────────────────────── */
+        @media (max-width: 768px) {
+            .tm-content { padding: 12px; }
+            .tm-form-grid { grid-template-columns: 1fr; }
+            .tm-topbar { padding: 12px 16px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="tm-topbar">
+    <div class="tm-brand">
+        <div class="tm-brand-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="12" x2="6" y2="5"></line>
+                <line x1="12" y1="12" x2="19" y2="9"></line>
+                <line x1="12" y1="12" x2="8" y2="19"></line>
+                <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"></circle>
+                <circle cx="6" cy="5" r="1.9"></circle>
+                <circle cx="19" cy="9" r="1.9"></circle>
+                <circle cx="8" cy="19" r="1.9"></circle>
+            </svg>
+        </div>
+        <div>
+            <div class="tm-brand-title">Topic Management</div>
+            <div class="tm-brand-sub">Create and configure Kafka topics &amp; consumers</div>
+        </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+        <button class="tm-btn tm-btn-secondary" id="tm-global-refresh" style="color:#fff;border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.08)">
+            <svg id="tm-refresh-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+            Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="tm-tabs">
+    <div class="tm-tab active" data-tab="topics">Topics</div>
+    <div class="tm-tab" data-tab="consumers">Consumers</div>
+</div>
+
+<!-- Content -->
+<div class="tm-content">
+
+    <!-- ════════════════════════════════════════════════════════════════ TOPICS TAB -->
+    <div class="tm-section active" id="tm-topics-section">
+
+        <!-- Create Topic Form -->
+        <div class="tm-card">
+            <div class="tm-card-header">
+                <span class="tm-card-title">Create Topic</span>
+            </div>
+            <div class="tm-card-body">
+                <form id="tm-create-topic-form">
+                    <div class="tm-form-grid">
+                        <div class="tm-field">
+                            <label>Cluster</label>
+                            <select id="tm-topic-cluster" required>
+                                <option value="">Loading…</option>
+                            </select>
+                            <span class="tm-field-hint">Kafka cluster to create the topic on</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>Topic Name</label>
+                            <input type="text" id="tm-topic-name" placeholder="e.g. v0-shr-analytics-cce-failure-retry" required>
+                            <span class="tm-field-hint">Lowercase, hyphens allowed</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>Partitions</label>
+                            <input type="number" id="tm-topic-partitions" value="20" min="20" max="200" required>
+                            <span class="tm-field-hint">Minimum 20</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>Replication Factor</label>
+                            <input type="number" id="tm-topic-replication" value="3" min="1" max="10" required>
+                            <span class="tm-field-hint">Typically 3 for production</span>
+                        </div>
+                    </div>
+                    <div style="margin-top:14px;display:flex;align-items:center;gap:10px">
+                        <button type="submit" class="tm-btn tm-btn-primary" id="tm-topic-submit">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            Create Topic
+                        </button>
+                        <span id="tm-topic-form-msg" style="font-size:12px"></span>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Topics Table -->
+        <div class="tm-card">
+            <div class="tm-card-header">
+                <span class="tm-card-title">Topics</span>
+                <span class="tm-pill tm-pill-blue" id="tm-topic-count">0</span>
+            </div>
+            <div class="tm-table-scroll">
+                <table class="tm-table">
+                    <thead>
+                        <tr>
+                            <th>Topic Name</th>
+                            <th class="tm-num">Partitions</th>
+                            <th class="tm-num">Replication</th>
+                            <th class="tm-num">Messages</th>
+                            <th class="tm-num">Lag</th>
+                            <th class="tm-num">Consumers</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tm-topics-tbody">
+                        <tr><td colspan="7" class="tm-empty">Loading topics…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════ CONSUMERS TAB -->
+    <div class="tm-section" id="tm-consumers-section">
+
+        <!-- Create Consumer Form -->
+        <div class="tm-card">
+            <div class="tm-card-header">
+                <span class="tm-card-title">Create Consumer</span>
+            </div>
+            <div class="tm-card-body">
+                <form id="tm-create-consumer-form">
+                    <div class="tm-form-grid">
+                        <div class="tm-field">
+                            <label>Cluster</label>
+                            <input type="text" id="tm-consumer-cluster-display" value="" readonly disabled
+                                style="background:#f1f5f9;color:#64748b;cursor:not-allowed">
+                            <span class="tm-field-hint">Auto-detected from selected topic</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>Topic Name</label>
+                            <div class="tm-combo" id="tm-combo-consumer-topic">
+                                <input type="text" class="tm-combo-input" placeholder="Type to search topics…" autocomplete="off">
+                                <span class="tm-combo-arrow">▾</span>
+                                <div class="tm-combo-list"></div>
+                            </div>
+                            <span class="tm-field-hint">Must be an existing topic</span>
+                            <div id="tm-consumer-topic-warning" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;font-size:12px;color:#92400e"></div>
+                        </div>
+                        <div class="tm-field">
+                            <label>Consumer Group</label>
+                            <div style="display:flex;gap:0">
+                                <select id="tm-consumer-group-prefix" style="border-radius:6px 0 0 6px;border-right:none;min-width:60px;font-size:13px;padding:7px 6px;border:1px solid #d1d5db;background:#f8fafc;color:var(--text-primary)">
+                                    <option value="cg">cg</option>
+                                    <option value="ap">ap</option>
+                                </select>
+                                <input type="text" id="tm-consumer-group" readonly disabled
+                                    style="border-radius:0 6px 6px 0;flex:1;background:#f1f5f9;color:#64748b;cursor:not-allowed"
+                                    placeholder="Select a topic first">
+                            </div>
+                            <span class="tm-field-hint">Auto-generated: prefix + topic name</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>API Endpoint</label>
+                            <input type="url" id="tm-consumer-endpoint" placeholder="https://api.example.com/inbound" required>
+                            <span class="tm-field-hint">URL to forward consumed messages to</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>Authentication</label>
+                            <select id="tm-consumer-auth-type">
+                                <option value="none">None</option>
+                                <option value="basic">Basic Auth (Username + Password)</option>
+                                <option value="api_key">API Key</option>
+                                <option value="consumer">Consumer Key / Secret</option>
+                            </select>
+                        </div>
+                        <div class="tm-field tm-auth-field tm-auth-basic" style="display:none">
+                            <label>API Username</label>
+                            <input type="text" id="tm-consumer-username" placeholder="Username">
+                        </div>
+                        <div class="tm-field tm-auth-field tm-auth-basic" style="display:none">
+                            <label>API Password</label>
+                            <input type="password" id="tm-consumer-password" placeholder="Password">
+                        </div>
+                        <div class="tm-field tm-auth-field tm-auth-api-key" style="display:none">
+                            <label>API Key</label>
+                            <input type="text" id="tm-consumer-api-key" placeholder="API Key value">
+                        </div>
+                        <div class="tm-field tm-auth-field tm-auth-consumer" style="display:none">
+                            <label>Consumer Key</label>
+                            <input type="text" id="tm-consumer-consumer-key" placeholder="Consumer Key">
+                        </div>
+                        <div class="tm-field tm-auth-field tm-auth-consumer" style="display:none">
+                            <label>Consumer Secret</label>
+                            <input type="password" id="tm-consumer-consumer-secret" placeholder="Consumer Secret">
+                        </div>
+                        <div class="tm-field">
+                            <label>Output Topic</label>
+                            <div class="tm-combo" id="tm-combo-consumer-output">
+                                <input type="text" class="tm-combo-input" placeholder="Type to search topics…" autocomplete="off">
+                                <span class="tm-combo-arrow">▾</span>
+                                <div class="tm-combo-list"></div>
+                            </div>
+                            <span class="tm-field-hint">Optional — on success</span>
+                        </div>
+                        <div class="tm-field">
+                            <label>Failure Topic</label>
+                            <div class="tm-combo" id="tm-combo-consumer-failure">
+                                <input type="text" class="tm-combo-input" placeholder="Type to search topics…" autocomplete="off">
+                                <span class="tm-combo-arrow">▾</span>
+                                <div class="tm-combo-list"></div>
+                            </div>
+                            <span class="tm-field-hint">Optional — on failure</span>
+                        </div>
+                    </div>
+                    <div style="margin-top:14px;display:flex;align-items:center;gap:10px">
+                        <button type="submit" class="tm-btn tm-btn-primary" id="tm-consumer-submit">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            Create Consumer
+                        </button>
+                        <span id="tm-consumer-form-msg" style="font-size:12px"></span>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Consumers Table -->
+        <div class="tm-card">
+            <div class="tm-card-header">
+                <span class="tm-card-title">Consumers</span>
+                <span class="tm-pill tm-pill-blue" id="tm-consumer-count">0</span>
+            </div>
+            <div class="tm-table-scroll">
+                <table class="tm-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Topic</th>
+                            <th>Consumer Group</th>
+                            <th>Endpoint</th>
+                            <th>Output Topic</th>
+                            <th>Failure Topic</th>
+                            <th class="tm-num">Lag</th>
+                            <th>Status</th>
+                            <th>Enabled</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tm-consumers-tbody">
+                        <tr><td colspan="9" class="tm-empty">Loading consumers…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div class="tm-toast" id="tm-toast"></div>
+
+<script>
+(function () {
+    "use strict";
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+    var csrf_token = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+
+    function fmt_num(n) { return Number(n).toLocaleString(); }
+
+    function toast(msg, type) {
+        var el = document.getElementById("tm-toast");
+        el.textContent = msg;
+        el.className = "tm-toast " + (type || "green") + " show";
+        clearTimeout(el._timer);
+        el._timer = setTimeout(function () { el.classList.remove("show"); }, 4000);
+    }
+
+    function set_msg(el_id, text, color) {
+        var el = document.getElementById(el_id);
+        el.textContent = text;
+        el.style.color = color || "#059669";
+        setTimeout(function () { el.textContent = ""; }, 5000);
+    }
+
+    function api_call(method, args) {
+        var url = "/api/method/" + method;
+        var opts = {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Frappe-CSRF-Token": csrf_token
+            }
+        };
+        if (args && Object.keys(args).length) {
+            opts.body = JSON.stringify(args);
+        }
+        return fetch(url, opts).then(function (res) {
+            return res.json();
+        }).then(function (raw) {
+            // format_response returns: {status, message, status_code, data, pagination}
+            if (raw && typeof raw === "object" && "data" in raw) {
+                return raw;
+            }
+            var msg = raw.message !== undefined ? raw.message : raw;
+            return { data: msg, status_code: 200 };
+        });
+    }
+
+    // ── Load clusters ────────────────────────────────────────────────────
+    function load_clusters() {
+        api_call("kafka_mediator.api.topic.list_clusters").then(function (res) {
+            var clusters = res.data || [];
+            var $sel = document.getElementById("tm-topic-cluster");
+            $sel.innerHTML = "";
+            if (!clusters.length) {
+                $sel.innerHTML = '<option value="">No clusters found</option>';
+                return;
+            }
+            $sel.innerHTML = '<option value="">— Select cluster —</option>';
+            clusters.forEach(function (c) {
+                var opt = document.createElement("option");
+                opt.value = c.name;
+                opt.textContent = c.name;
+                $sel.appendChild(opt);
+            });
+        }).catch(function (e) {
+            console.error("load_clusters failed:", e);
+            document.getElementById("tm-topic-cluster").innerHTML = '<option value="">Failed to load clusters</option>';
+        });
+    }
+
+    // ── Tab switching ───────────────────────────────────────────────────
+    document.querySelectorAll(".tm-tab").forEach(function (tab) {
+        tab.addEventListener("click", function () {
+            document.querySelectorAll(".tm-tab").forEach(function (t) { t.classList.remove("active"); });
+            document.querySelectorAll(".tm-section").forEach(function (s) { s.classList.remove("active"); });
+            tab.classList.add("active");
+            document.getElementById("tm-" + tab.dataset.tab + "-section").classList.add("active");
+        });
+    });
+
+    // ── Topic creation ──────────────────────────────────────────────────
+    document.getElementById("tm-create-topic-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var btn = document.getElementById("tm-topic-submit");
+        var cluster = document.getElementById("tm-topic-cluster").value;
+        var name = document.getElementById("tm-topic-name").value.trim();
+        var partitions = parseInt(document.getElementById("tm-topic-partitions").value, 10);
+        var replication = parseInt(document.getElementById("tm-topic-replication").value, 10);
+
+        if (!cluster) { set_msg("tm-topic-form-msg", "Please select a cluster.", "#dc2626"); return; }
+        if (!name) { set_msg("tm-topic-form-msg", "Topic name is required.", "#dc2626"); return; }
+        if (isNaN(partitions) || partitions < 20) { set_msg("tm-topic-form-msg", "Minimum 20 partitions.", "#dc2626"); return; }
+        if (isNaN(replication) || replication < 1) { set_msg("tm-topic-form-msg", "Replication factor must be ≥ 1.", "#dc2626"); return; }
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="tm-spinning" style="display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%"></span> Creating…';
+
+        api_call("kafka_mediator.api.topic.create_topic", {
+            topic_name: name,
+            num_partitions: partitions,
+            replication_factor: replication,
+            cluster: cluster
+        }).then(function (res) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Create Topic';
+
+            if (res.status_code === 200) {
+                set_msg("tm-topic-form-msg", "Topic created successfully.", "#059669");
+                toast("Topic '" + name + "' created.", "green");
+                document.getElementById("tm-topic-name").value = "";
+                load_topics();
+            } else {
+                set_msg("tm-topic-form-msg", res.message || "Creation failed.", "#dc2626");
+                toast(res.message || "Failed to create topic.", "red");
+            }
+        }).catch(function () {
+            btn.disabled = false;
+            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Create Topic';
+            set_msg("tm-topic-form-msg", "Request failed. Check console.", "#dc2626");
+            toast("Network error.", "red");
+        });
+    });
+
+    // ── Load topics ─────────────────────────────────────────────────────
+    var _topics_cache = [];
+
+    function load_topics() {
+        api_call("kafka_mediator.api.topic.list_topics").then(function (res) {
+            var topics = res.data || [];
+            _topics_cache = topics;
+            document.getElementById("tm-topic-count").textContent = topics.length;
+
+            // Populate consumer comboboxes
+            _init_combo("tm-combo-consumer-topic", topics, false);
+            _init_combo("tm-combo-consumer-output", topics, true);
+            _init_combo("tm-combo-consumer-failure", topics, true);
+            _on_combo_select("tm-combo-consumer-topic", _update_consumer_cluster);
+
+            var $tbody = document.getElementById("tm-topics-tbody");
+            if (!topics.length) {
+                $tbody.innerHTML = '<tr><td colspan="7" class="tm-empty">No topics found. Create one above.</td></tr>';
+                return;
+            }
+
+            var html = "";
+            topics.forEach(function (t) {
+                var last = t.last_updated ? String(t.last_updated).replace("T", " ").split(".")[0] : "—";
+                var lag_cls = (t.lag || 0) > 0 ? "color:#d97706;font-weight:600" : "";
+                html += "<tr>"
+                    + '<td style="font-weight:500">' + (t.topic_name || "") + '</td>'
+                    + '<td class="tm-num">' + (t.num_partitions || 0) + '</td>'
+                    + '<td class="tm-num">' + (t.replication_factor || 0) + '</td>'
+                    + '<td class="tm-num">' + fmt_num(t.message_count || 0) + '</td>'
+                    + '<td class="tm-num" style="' + lag_cls + '">' + (t.lag || 0) + '</td>'
+                    + '<td class="tm-num">' + (t.active_consumers || 0) + '</td>'
+                    + '<td style="color:#94a3b8;font-size:12px">' + last + '</td>'
+                    + "</tr>";
+            });
+            $tbody.innerHTML = html;
+        }).catch(function (e) {
+            console.error("load_topics failed:", e);
+            document.getElementById("tm-topics-tbody").innerHTML =
+                '<tr><td colspan="7" class="tm-empty" style="color:#dc2626">Failed to load topics.</td></tr>';
+        });
+    }
+
+    // ── Searchable combobox ──────────────────────────────────────────────
+    var _combo_instances = {};
+    var _combo_callbacks = {};
+
+    function _on_combo_select(combo_id, fn) {
+        _combo_callbacks[combo_id] = fn;
+    }
+
+    function _init_combo(combo_id, topics, allow_empty) {
+        var $el = document.getElementById(combo_id);
+        if (!$el) return;
+        var $input = $el.querySelector(".tm-combo-input");
+        var $list = $el.querySelector(".tm-combo-list");
+
+        // Store state on the element
+        $el.dataset.val = "";
+        _combo_instances[combo_id] = { $el: $el, $input: $input, $list: $list, topics: topics, allow_empty: allow_empty };
+
+        // Render full list
+        _render_combo_list(combo_id, "");
+
+        // Remove old listeners by cloning
+        var new_input = $input.cloneNode(true);
+        $input.parentNode.replaceChild(new_input, $input);
+        $el.querySelector(".tm-combo-input").classList.add("tm-combo-input");
+
+        var $new_input = $el.querySelector(".tm-combo-input");
+        _combo_instances[combo_id].$input = $new_input;
+
+        // Focus — show list
+        $new_input.addEventListener("focus", function () {
+            _render_combo_list(combo_id, $new_input.value);
+            $list.classList.add("open");
+        });
+
+        // Type — filter list, clear selection
+        $new_input.addEventListener("input", function () {
+            _render_combo_list(combo_id, $new_input.value);
+            $list.classList.add("open");
+            $el.dataset.val = "";
+        });
+
+        // Blur — close list (delayed so mousedown can fire first)
+        $new_input.addEventListener("blur", function () {
+            setTimeout(function () { $list.classList.remove("open"); }, 200);
+        });
+
+        // Close on outside click
+        document.addEventListener("click", function (e) {
+            if (!$el.contains(e.target)) $list.classList.remove("open");
+        });
+    }
+
+    function _render_combo_list(combo_id, query) {
+        var inst = _combo_instances[combo_id];
+        if (!inst) return;
+        var q = (query || "").toLowerCase();
+        var filtered = inst.topics.filter(function (t) {
+            return !q || t.topic_name.toLowerCase().indexOf(q) !== -1;
+        });
+
+        var html = "";
+        if (inst.allow_empty) {
+            html += '<div class="tm-combo-item" data-value="">— None —</div>';
+        }
+        if (!filtered.length && !inst.allow_empty) {
+            html += '<div class="tm-combo-empty">No topics found</div>';
+        } else {
+            filtered.forEach(function (t) {
+                var sel = inst.$el.dataset.val === t.topic_name ? " selected" : "";
+                html += '<div class="tm-combo-item' + sel + '" data-value="' + t.topic_name + '">' + t.topic_name + '</div>';
+            });
+        }
+        inst.$list.innerHTML = html;
+
+        // Bind click on items
+        inst.$list.querySelectorAll(".tm-combo-item").forEach(function (item) {
+            item.addEventListener("mousedown", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var val = item.dataset.value;
+                inst.$el.dataset.val = val;
+                inst.$input.value = val || "";
+                inst.$list.classList.remove("open");
+                if (_combo_callbacks[combo_id]) {
+                    _combo_callbacks[combo_id](val);
+                }
+            });
+        });
+    }
+
+    function _get_combo_value(combo_id) {
+        var inst = _combo_instances[combo_id];
+        return inst ? (inst.$el.dataset.val || "") : "";
+    }
+
+    // ── Auto-detect cluster from selected topic ──────────────────────────
+    var _consumers_cache = [];
+
+    function _update_consumer_cluster(topic_name) {
+        var $display = document.getElementById("tm-consumer-cluster-display");
+        var $warning = document.getElementById("tm-consumer-topic-warning");
+        var $group = document.getElementById("tm-consumer-group");
+        var prefix = document.getElementById("tm-consumer-group-prefix").value;
+
+        if (!topic_name) {
+            $display.value = "";
+            $warning.style.display = "none";
+            $group.value = "";
+            $group.placeholder = "Select a topic first";
+            return;
+        }
+
+        // Auto-generate consumer group
+        $group.value = prefix + "-" + topic_name;
+
+        var topic = _topics_cache.find(function (t) { return t.topic_name === topic_name; });
+        $display.value = topic ? (topic.cluster || "") : "";
+
+        // Filter output/failure comboboxes to same cluster
+        var cluster = topic ? topic.cluster : null;
+        var same_cluster = cluster
+            ? _topics_cache.filter(function (t) { return t.cluster === cluster; })
+            : _topics_cache;
+        _init_combo("tm-combo-consumer-output", same_cluster, true);
+        _init_combo("tm-combo-consumer-failure", same_cluster, true);
+
+        // Check for existing consumers on this topic
+        var existing = _consumers_cache.filter(function (c) {
+            return c.topic === topic_name && c.enabled === 1;
+        });
+        if (existing.length > 0) {
+            var groups = [];
+            existing.forEach(function (c) {
+                if (groups.indexOf(c.consumer_group) === -1) groups.push(c.consumer_group);
+            });
+            $warning.innerHTML = "<strong>⚠ This topic already has " + existing.length
+                + " active consumer(s) in group(s):</strong> " + groups.join(", ")
+                + ". Use a different consumer group name to add another consumer.";
+            $warning.style.display = "block";
+        } else {
+            $warning.style.display = "none";
+        }
+    }
+
+    // ── Auth type toggle ─────────────────────────────────────────────────
+    document.getElementById("tm-consumer-group-prefix").addEventListener("change", function () {
+        var topic = _get_combo_value("tm-combo-consumer-topic");
+        if (topic) {
+            document.getElementById("tm-consumer-group").value = this.value + "-" + topic;
+        }
+    });
+
+    document.getElementById("tm-consumer-auth-type").addEventListener("change", function () {
+        var type = this.value;
+        document.querySelectorAll(".tm-auth-field").forEach(function (el) { el.style.display = "none"; });
+        if (type === "basic") {
+            document.querySelectorAll(".tm-auth-basic").forEach(function (el) { el.style.display = ""; });
+        } else if (type === "api_key") {
+            document.querySelectorAll(".tm-auth-api-key").forEach(function (el) { el.style.display = ""; });
+        } else if (type === "consumer") {
+            document.querySelectorAll(".tm-auth-consumer").forEach(function (el) { el.style.display = ""; });
+        }
+    });
+
+    // ── Consumer creation ───────────────────────────────────────────────
+    document.getElementById("tm-create-consumer-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var btn = document.getElementById("tm-consumer-submit");
+        var topic_name    = _get_combo_value("tm-combo-consumer-topic");
+        var consumer_group = document.getElementById("tm-consumer-group").value.trim();
+        var api_endpoint   = document.getElementById("tm-consumer-endpoint").value.trim();
+        var output_topic   = _get_combo_value("tm-combo-consumer-output");
+        var failure_topic  = _get_combo_value("tm-combo-consumer-failure");
+
+        if (!topic_name || !consumer_group || !api_endpoint) {
+            set_msg("tm-consumer-form-msg", "Topic, group, and endpoint are required.", "#dc2626");
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="tm-spinning" style="display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%"></span> Creating…';
+
+        var payload = {
+            topic_name: topic_name,
+            consumer_group: consumer_group,
+            api_endpoint: api_endpoint
+        };
+
+        var auth_type = document.getElementById("tm-consumer-auth-type").value;
+        if (auth_type === "basic") {
+            var u = document.getElementById("tm-consumer-username").value.trim();
+            var p = document.getElementById("tm-consumer-password").value;
+            if (u) payload.api_username = u;
+            if (p) payload.api_password = p;
+        } else if (auth_type === "api_key") {
+            var k = document.getElementById("tm-consumer-api-key").value.trim();
+            if (k) payload.api_key = k;
+        } else if (auth_type === "consumer") {
+            var ck = document.getElementById("tm-consumer-consumer-key").value.trim();
+            var cs = document.getElementById("tm-consumer-consumer-secret").value;
+            if (ck) payload.consumer_key = ck;
+            if (cs) payload.consumer_secret = cs;
+        }
+        if (output_topic) payload.output_topic = output_topic;
+        if (failure_topic) payload.failure_topic = failure_topic;
+
+        api_call("kafka_mediator.api.consumer.create_consumer", payload).then(function (res) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Create Consumer';
+
+            if (res.status_code === 200) {
+                set_msg("tm-consumer-form-msg", "Consumer created and started.", "#059669");
+                toast("Consumer '" + consumer_group + "' created.", "green");
+                document.getElementById("tm-create-consumer-form").reset();
+                // Reset auth fields visibility
+                document.querySelectorAll(".tm-auth-field").forEach(function (el) { el.style.display = "none"; });
+                // Reset comboboxes
+                _init_combo("tm-combo-consumer-topic", _topics_cache, false);
+                _init_combo("tm-combo-consumer-output", _topics_cache, true);
+                _init_combo("tm-combo-consumer-failure", _topics_cache, true);
+                load_consumers();
+            } else {
+                set_msg("tm-consumer-form-msg", res.message || "Creation failed.", "#dc2626");
+                toast(res.message || "Failed to create consumer.", "red");
+            }
+        }).catch(function () {
+            btn.disabled = false;
+            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Create Consumer';
+            set_msg("tm-consumer-form-msg", "Request failed. Check console.", "#dc2626");
+            toast("Network error.", "red");
+        });
+    });
+
+    // ── Load consumers ──────────────────────────────────────────────────
+    function load_consumers() {
+        api_call("kafka_mediator.api.consumer.list_consumers").then(function (res) {
+            var consumers = res.data || [];
+            document.getElementById("tm-consumer-count").textContent = consumers.length;
+
+            var $tbody = document.getElementById("tm-consumers-tbody");
+            if (!consumers.length) {
+                $tbody.innerHTML = '<tr><td colspan="9" class="tm-empty">No consumers found. Create one above.</td></tr>';
+                return;
+            }
+
+            var html = "";
+            consumers.forEach(function (c) {
+                var st = c.thread_status || "stopped";
+                var dot_cls  = { running: "tm-dot-green", error: "tm-dot-red", restarting: "tm-dot-orange" }[st] || "tm-dot-grey";
+                var pill_cls = { running: "tm-pill-green", error: "tm-pill-red", restarting: "tm-pill-orange" }[st] || "tm-pill-grey";
+
+                var on_cls = c.enabled ? " on" : "";
+                var toggle_label = c.enabled ? "On" : "Off";
+                var toggle_title = c.enabled ? "Click to disable" : "Click to enable";
+
+                var ep = c.api_endpoint || "";
+                var ep_short = ep.length > 30 ? ep.substring(0, 28) + "…" : ep;
+
+                html += "<tr>"
+                    + '<td style="font-weight:500;font-size:12px" title="' + (c.name || "") + '">' + (c.name || "") + '</td>'
+                    + '<td>' + (c.topic || "") + '</td>'
+                    + '<td>' + (c.consumer_group || "") + '</td>'
+                    + '<td title="' + ep + '">' + ep_short + '</td>'
+                    + '<td>' + (c.output_topic || '<span style="color:#cbd5e1">—</span>') + '</td>'
+                    + '<td>' + (c.failure_topic || '<span style="color:#cbd5e1">—</span>') + '</td>'
+                    + '<td class="tm-num">' + (c.current_lag || 0) + '</td>'
+                    + '<td><span class="tm-pill ' + pill_cls + '"><span class="tm-dot ' + dot_cls + '"></span>' + st + '</span></td>'
+                    + '<td>'
+                    +   '<div class="tm-toggle tm-toggle-btn" data-consumer="' + (c.name || "") + '" data-enabled="' + (c.enabled || 0) + '" title="' + toggle_title + '">'
+                    +     '<div class="tm-toggle-track' + on_cls + '"><div class="tm-toggle-knob"></div></div>'
+                    +     '<span class="tm-toggle-label">' + toggle_label + '</span>'
+                    +   '</div>'
+                    + '</td>'
+                    + "</tr>";
+            });
+            $tbody.innerHTML = html;
+
+            // Bind toggle events
+            $tbody.querySelectorAll(".tm-toggle-btn").forEach(function (el) {
+                el.addEventListener("click", function () {
+                    var consumer_id = el.dataset.consumer;
+                    var is_enabled = el.dataset.enabled === "1";
+                    toggle_consumer(consumer_id, is_enabled);
+                });
+            });
+        }).catch(function () {
+            document.getElementById("tm-consumers-tbody").innerHTML =
+                '<tr><td colspan="9" class="tm-empty" style="color:#dc2626">Failed to load consumers.</td></tr>';
+        });
+    }
+
+    // ── Toggle consumer enable/disable ──────────────────────────────────
+    function toggle_consumer(consumer_id, currently_enabled) {
+        var method = currently_enabled
+            ? "kafka_mediator.api.consumer.disable_consumer"
+            : "kafka_mediator.api.consumer.enable_consumer";
+
+        api_call(method, { consumer_id: consumer_id }).then(function (res) {
+            if (res.status_code === 200) {
+                var action = currently_enabled ? "disabled" : "enabled";
+                toast("Consumer '" + consumer_id + "' " + action + ".", "green");
+                load_consumers();
+            } else {
+                toast(res.message || "Toggle failed.", "red");
+            }
+        }).catch(function () {
+            toast("Network error.", "red");
+        });
+    }
+
+    // ── Global refresh ──────────────────────────────────────────────────
+    document.getElementById("tm-global-refresh").addEventListener("click", function () {
+        var icon = document.getElementById("tm-refresh-icon");
+        icon.classList.add("tm-spinning");
+        load_topics();
+        load_consumers();
+        setTimeout(function () { icon.classList.remove("tm-spinning"); }, 800);
+    });
+
+    // ── Initial load ────────────────────────────────────────────────────
+    load_clusters();
+    load_topics();
+    load_consumers();
+
+})();
+</script>
+
+</body>
+</html>

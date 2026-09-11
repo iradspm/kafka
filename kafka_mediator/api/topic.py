@@ -30,8 +30,20 @@ def create_topic(**kwargs):
     topic_name = payload.get("topic_name").strip().lower()
     num_partitions = int(payload.get("num_partitions", 6))
     replication_factor = int(payload.get("replication_factor", 3))
+    cluster_name = (payload.get("cluster") or "").strip() or None
 
     settings = get_default_settings()
+
+    if cluster_name:
+        if not frappe.db.exists("Kafka Cluster", cluster_name):
+            return format_response(
+                status_code=404,
+                message=f"Cluster '{cluster_name}' not found."
+            )
+        target_cluster = cluster_name
+    else:
+        target_cluster = settings.default_cluster
+
     if frappe.db.exists("Kafka Topic", {"topic_name": topic_name}):
         return format_response(
             status_code = 400,
@@ -41,7 +53,7 @@ def create_topic(**kwargs):
     try:
         topic = frappe.get_doc({
             "doctype": "Kafka Topic",
-            "cluster": settings.default_cluster,
+            "cluster": target_cluster,
             "topic_name": topic_name,
             "num_partitions": num_partitions or settings.default_partitions,
             "replication_factor": replication_factor or settings.default_replication_factor
@@ -50,7 +62,7 @@ def create_topic(**kwargs):
 
         producer = frappe.get_doc({
             "doctype": "Kafka Producer",
-            "cluster": settings.default_cluster,
+            "cluster": target_cluster,
             "topic": topic_name
         })
         producer.insert()
@@ -573,13 +585,14 @@ def list_topics(**kwargs):
             filters=filters,
             fields=[
                 "topic_name", "cluster", "num_partitions", "replication_factor",
-                "message_count", "lag", "active_consumers", "last_updated"
+                "message_count", "lag", "active_consumers", "last_updated", "creation"
             ],
-            order_by="cluster asc, topic_name asc"
+            order_by="creation desc"
         )
 
         for topic in topics:
             topic["last_updated"] = str(topic["last_updated"]) if topic.get("last_updated") else None
+            topic["creation"] = str(topic["creation"]) if topic.get("creation") else None
 
         return format_response(
             status_code=200,
@@ -591,6 +604,27 @@ def list_topics(**kwargs):
         return format_response(
             status_code=500,
             message=f"Failed to list topics: {str(e)}"
+        )
+
+
+@frappe.whitelist()
+def list_clusters(**kwargs):
+    """Return all Kafka Cluster docs (name only)."""
+    try:
+        clusters = frappe.get_all(
+            "Kafka Cluster",
+            fields=["name"],
+            order_by="name asc"
+        )
+        return format_response(
+            status_code=200,
+            message=f"{len(clusters)} cluster(s) found.",
+            data=clusters
+        )
+    except Exception as e:
+        return format_response(
+            status_code=500,
+            message=f"Failed to list clusters: {str(e)}"
         )
 
 

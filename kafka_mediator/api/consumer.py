@@ -38,6 +38,10 @@ def create_consumer(**kwargs):
             message=f"Topic '{topic_name}' does not exist. Create it first."
         )
 
+    # Auto-detect cluster from the topic
+    topic_cluster = frappe.db.get_value("Kafka Topic", {"topic_name": topic_name}, "cluster")
+    target_cluster = topic_cluster or settings.default_cluster
+
     if output_topic and not frappe.db.exists("Kafka Topic", {"topic_name": output_topic}):
         return format_response(
             status_code=404,
@@ -60,7 +64,7 @@ def create_consumer(**kwargs):
         # Build consumer dict with only non-empty password fields
         consumer_dict = {
             "doctype": "Kafka Consumer",
-            "cluster": settings.default_cluster,
+            "cluster": target_cluster,
             "topic": topic_name,
             "consumer_group": consumer_group,
             "api_endpoint": api_endpoint,
@@ -195,9 +199,12 @@ def list_consumers(**kwargs):
             fields=[
                 "name", "topic", "consumer_group", "api_endpoint",
                 "output_topic", "failure_topic", "enabled", "current_lag",
-                "thread_status", "last_heartbeat", "assigned_partitions"
-            ]
+                "thread_status", "last_heartbeat", "assigned_partitions", "creation"
+            ],
+            order_by="creation desc"
         )
+        for c in consumers:
+            c["creation"] = str(c["creation"]) if c.get("creation") else None
         return format_response(
             status_code=200,
             message=f"{len(consumers)} consumer(s) found.",
