@@ -87,7 +87,10 @@ def start_enabled_consumers():
                     _started_here.add(name)
                     logger.info(f"Reconcile: (re)started consumer thread for {name}")
                 except Exception as e:
-                    frappe.log_error(f"Reconcile: failed to start consumer {name}: {str(e)}")
+                    frappe.log_error(
+                        f"Reconcile: {name}",
+                        f"Failed to start consumer {name}: {str(e)}"
+                    )
             try:
                 frappe.db.commit()
             except Exception:
@@ -95,7 +98,10 @@ def start_enabled_consumers():
         except Exception as e:
             # Never let a reconcile failure break the request it piggybacked on.
             try:
-                frappe.log_error(f"start_enabled_consumers failed: {str(e)}")
+                frappe.log_error(
+                    "start_enabled_consumers",
+                    f"Reconcile sweep failed: {str(e)}"
+                )
             except Exception:
                 pass
     finally:
@@ -153,7 +159,7 @@ def restart_dead_consumers():
             threading.Thread(target=consumer_doc.consume_messages, args=(site,), daemon=True).start()
             logger.info(f"Auto-restarted stale consumer {entry['name']}")
         except Exception as e:
-            frappe.log_error(f"Failed to auto-restart consumer {entry['name']}: {str(e)}")
+            frappe.log_error("Auto-restart Consumer", f"Failed to auto-restart consumer {entry['name']}: {str(e)}")
 
 
 def heal_lagging_groups():
@@ -272,11 +278,12 @@ def heal_lagging_groups():
                         )
                     except Exception as e:
                         frappe.log_error(
-                            f"heal_lagging_groups: failed to restart {c['name']} for group '{gid}': {e}"
+                            "heal_lagging_groups",
+                            f"Failed to restart {c['name']} for group '{gid}': {e}"
                         )
 
         except Exception as e:
-            frappe.log_error(f"heal_lagging_groups: cluster '{cluster_name}' check failed: {e}")
+            frappe.log_error("heal_lagging_groups", f"Cluster '{cluster_name}' check failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +360,7 @@ def _send_lag_sms(cluster_name, topic, consumer_group, lag, settings):
             try:
                 message = frappe.render_template(template, context)
             except Exception as e:
-                frappe.log_error(f"SMS template render failed for {r.full_name}: {e}")
+                frappe.log_error("SMS Template Error", f"Template render failed for {r.full_name}: {e}")
                 message = (
                     f"[Kafka Alert] High lag on cluster '{cluster_name}'.\n"
                     f"Topic: {topic} | Group: {consumer_group}\n"
@@ -375,7 +382,7 @@ def _send_lag_sms(cluster_name, topic, consumer_group, lag, settings):
                 f"lag={lag} to {sent} recipient(s)"
             )
     except Exception as e:
-        frappe.log_error(f"SMS alert failed for cluster '{cluster_name}': {e}")
+        frappe.log_error("SMS Alert Error", f"Failed for cluster '{cluster_name}': {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +459,7 @@ def monitor_kafka_metrics():
             frappe.db.commit()
 
         except Exception as e:
-            frappe.log_error(f"Failed to monitor consumer {consumer.name}: {str(e)}")
+            frappe.log_error("Monitor Consumer", f"Failed to monitor consumer {consumer.name}: {str(e)}")
 
 
 def check_consumer_lag(conf, topic, group_id, consumer=None):
@@ -477,7 +484,7 @@ def check_consumer_lag(conf, topic, group_id, consumer=None):
             total_lag += lag if lag > 0 else 0
         return total_lag
     except Exception as e:
-        frappe.log_error(f"Failed to check consumer lag for topic {topic}: {str(e)}")
+        frappe.log_error("Consumer Lag Check", f"Failed to check lag for topic {topic}: {str(e)}")
         raise
     finally:
         if owns_consumer and consumer:
@@ -511,7 +518,7 @@ def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
             threading.Thread(target=doc.consume_messages, args=(site,), daemon=True).start()
             logger.info(f"scale_consumer: restarted stale thread for {s.name}")
         except Exception as e:
-            frappe.log_error(f"scale_consumer: failed to restart stale {s.name}: {e}")
+            frappe.log_error("Scale Consumer", f"Failed to restart stale consumer {s.name}: {e}")
 
     current_consumers = len(frappe.get_all("Kafka Consumer", filters={
         "topic": topic_name, "consumer_group": consumer_group, "enabled": 1
@@ -589,7 +596,7 @@ def scale_consumer(consumer_name, topic_name, consumer_group, target_consumers):
             consumers_needed -= 1
             total_consumers += 1
         except Exception as e:
-            frappe.log_error(f"Failed to scale consumer {consumer_name}: {str(e)}")
+            frappe.log_error("Scale Consumer", f"Failed to scale consumer {consumer_name}: {str(e)}")
             break
 
 
@@ -610,7 +617,7 @@ def scale_down_consumer(consumer_name, topic_name, consumer_group, target_consum
             frappe.db.commit()
             logger.info(f"Scaled down: disabled consumer {consumer.name} for topic {topic_name}")
     except Exception as e:
-        frappe.log_error(f"Failed to scale down consumer {consumer_name}: {str(e)}")
+        frappe.log_error("Scale Down Consumer", f"Failed to scale down consumer {consumer_name}: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -889,7 +896,7 @@ def cleanup_orphaned_consumers():
                     frappe.delete_doc("Kafka Consumer", consumer.name)
                     logger.info(f"Deleted orphaned consumer {consumer.name} for topic {group.topic}")
                 except Exception as e:
-                    frappe.log_error(f"Failed to delete orphaned consumer {consumer.name}: {str(e)}")
+                    frappe.log_error("Cleanup Orphan", f"Failed to delete orphaned consumer {consumer.name}: {str(e)}")
 
 
 @frappe.whitelist()
@@ -993,10 +1000,10 @@ def update_topic_stats():
                         f"messages={message_count}, lag={lag}, rf={replication_factor}"
                     )
                 except Exception as e:
-                    frappe.log_error(f"Failed to update stats for topic {topic.topic_name}: {str(e)}")
+                    frappe.log_error("Update Topic Stats", f"Failed to update stats for topic {topic.topic_name}: {str(e)}")
 
         except Exception as e:
-            frappe.log_error(f"Failed to connect to cluster {cluster_name} for stats: {str(e)}")
+            frappe.log_error("Cluster Stats Connect", f"Failed to connect to cluster {cluster_name} for stats: {str(e)}")
         finally:
             try:
                 if consumer:
@@ -1054,7 +1061,7 @@ def update_cluster_stats():
                 f"lag={total_lag}, consumers={total_consumers}"
             )
         except Exception as e:
-            frappe.log_error(f"Failed to update stats for cluster {cluster.name}: {str(e)}")
+            frappe.log_error("Update Cluster Stats", f"Failed to update stats for cluster {cluster.name}: {str(e)}")
             failed_values = {"broker_status": "Failed", "last_updated": frappe.utils.now()}
             if frappe.db.exists("Kafka Cluster Stats", {"cluster": cluster.name}):
                 frappe.db.set_value("Kafka Cluster Stats", {"cluster": cluster.name},

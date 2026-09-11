@@ -108,7 +108,7 @@ class KafkaCluster(Document):
 					logger.info(f"Topic {topic_name} already exists, skipping")
 			logger.info(f"Completed sync: {synced_count} topics synced for cluster {self.name}")
 		except Exception as e:
-			frappe.log_error(f"Failed to sync topics for cluster {self.name}", {str(e)})
+			frappe.log_error("Sync Topics Error", f"Failed to sync topics for cluster {self.name}: {str(e)}")
 		finally:
 			try:
 				admin_client.close() if 'admin_client' in locals() else None

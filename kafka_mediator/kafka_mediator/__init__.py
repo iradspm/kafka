@@ -42,4 +42,4 @@ def restart_dead_consumers():
                     target=doc.consume_messages, args=(site,), daemon=True
                 ).start()
             except Exception as e:
-                frappe.log_error(f"Watchdog failed to restart consumer {row.name}: {str(e)}")
+                frappe.log_error("Watchdog Restart", f"Failed to restart consumer {row.name}: {str(e)}")

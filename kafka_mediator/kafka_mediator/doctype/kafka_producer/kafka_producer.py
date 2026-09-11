@@ -48,5 +48,5 @@ class KafkaProducer(Document):
 		except Exception as e:
 			# Evict cached producer on failure so next call reconnects
 			KafkaProducer._producer_cache.pop(self.name, None)
-			frappe.log_error(f"Failed to publish message for producer {self.name}: {str(e)}")
+			frappe.log_error("Publish Message Error", f"Failed to publish message for producer {self.name}: {str(e)}")
 			frappe.throw(f"Failed to publish message: {str(e)}")

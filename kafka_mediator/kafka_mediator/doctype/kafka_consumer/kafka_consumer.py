@@ -52,7 +52,7 @@ class KafkaConsumer(Document):
         except frappe.ValidationError:
             raise
         except Exception as e:
-            frappe.log_error(f"Failed to validate topic for consumer {self.name}: {str(e)}")
+            frappe.log_error("Validate Topic Error", f"Failed to validate topic for consumer {self.name}: {str(e)}")
             frappe.throw(f"Failed to validate topic: {str(e)}")
         finally:
             pass  # AdminClient has no close()
@@ -63,7 +63,7 @@ class KafkaConsumer(Document):
             threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
             logger.info(f"Consumer {self.name} thread started for topic {self.topic}")
         except Exception as e:
-            frappe.log_error(f"Failed to start consumer thread {self.name}: {str(e)}")
+            frappe.log_error("Start Consumer Thread", f"Failed to start consumer thread {self.name}: {str(e)}")
             frappe.throw(f"Failed to start consumer thread: {str(e)}")
 
     RESTART_ON_CHANGE = {
@@ -157,7 +157,7 @@ class KafkaConsumer(Document):
             threading.Thread(target=self.consume_messages, args=(site,), daemon=True).start()
             logger.info(f"Consumer {self.name} thread restarted for topic {self.topic}")
         except Exception as e:
-            frappe.log_error(f"Failed to restart consumer thread {self.name}: {str(e)}")
+            frappe.log_error("Restart Consumer Thread", f"Failed to restart consumer thread {self.name}: {str(e)}")
 
     def consume_messages(self, site):
         self._site = site  # worker threads need this to init their own DB connection
@@ -283,7 +283,7 @@ class KafkaConsumer(Document):
                         valid_msgs = []
                         for msg in msgs:
                             if msg.error():
-                                frappe.log_error(f"Consumer {self.name} Kafka error: {msg.error()}")
+                                frappe.log_error("Consumer Kafka Error", f"Consumer {self.name} Kafka error: {msg.error()}")
                             else:
                                 valid_msgs.append(msg)
 
@@ -356,7 +356,7 @@ class KafkaConsumer(Document):
                         frappe.db.set_value("Kafka Consumer", self.name, "last_error", err_str, update_modified=False)
                         frappe.db.commit()
 
-                        frappe.log_error(f"Consumer {self.name} processing error: {err_str}")
+                        frappe.log_error("Consumer Processing Error", f"Consumer {self.name} processing error: {err_str}")
 
                         backoff_end = time.monotonic() + 5
                         while time.monotonic() < backoff_end:
@@ -372,6 +372,7 @@ class KafkaConsumer(Document):
 
             except Exception as e:
                 frappe.log_error(
+                    "Consumer Init Error",
                     f"Consumer {self.name}: failed to initialise Kafka consumer: {str(e)}"
                 )
                 raise

@@ -36,7 +36,7 @@ class KafkaTopic(Document):
             futures[self.topic_name].result()
             logger.info(f"Topic {self.topic_name} created in cluster {self.cluster}")
         except Exception as e:
-            frappe.log_error(f"Failed to create topic {self.topic_name}: {str(e)}")
+            frappe.log_error("Create Topic Error", f"Failed to create topic {self.topic_name}: {str(e)}")
             raise frappe.ValidationError(f"Failed to create topic in Kafka: {str(e)}")
         finally:
             pass  # AdminClient has no close()
@@ -81,7 +81,7 @@ class KafkaTopic(Document):
         except frappe.ValidationError:
             raise
         except Exception as e:
-            frappe.log_error(f"Failed to increase partitions for {self.topic_name}: {str(e)}")
+            frappe.log_error("Increase Partitions Error", f"Failed to increase partitions for {self.topic_name}: {str(e)}")
             frappe.throw(f"Failed to increase partitions: {str(e)}")
         finally:
             pass  # AdminClient has no close()

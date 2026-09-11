@@ -751,10 +751,10 @@ def sync_with_kafka(**kwargs):
                 cg_result = admin_client.list_consumer_groups().result()
                 kafka_groups = {g.group_id for g in cg_result.valid}
             except Exception as e:
-                frappe.log_error(f"sync_with_kafka: could not list consumer groups for '{cluster_name}': {e}")
+                frappe.log_error("sync_with_kafka", f"Could not list consumer groups for '{cluster_name}': {e}")
                 kafka_groups = None
         except Exception as e:
-            frappe.log_error(f"sync_with_kafka: could not reach cluster '{cluster_name}': {e}")
+            frappe.log_error("sync_with_kafka", f"Could not reach cluster '{cluster_name}': {e}")
             continue
 
         # recreate missing topics
@@ -779,7 +779,7 @@ def sync_with_kafka(**kwargs):
                 recreated_topics.append(t["topic_name"])
             except Exception as e:
                 failed_topics.append({"topic": t["topic_name"], "error": str(e)})
-                frappe.log_error(f"sync_with_kafka: failed to recreate topic '{t['topic_name']}': {e}")
+                frappe.log_error("sync_with_kafka", f"Failed to recreate topic '{t['topic_name']}': {e}")
 
         # decide which consumers need restarting for this cluster
         cluster_consumers = frappe.get_all(
@@ -831,7 +831,7 @@ def sync_with_kafka(**kwargs):
             restarted_consumers.append(consumer_name)
         except Exception as e:
             failed_consumers.append({"consumer": consumer_name, "error": str(e)})
-            frappe.log_error(f"sync_with_kafka: failed to restart consumer '{consumer_name}': {e}")
+            frappe.log_error("sync_with_kafka", f"Failed to restart consumer '{consumer_name}': {e}")
 
     msg_parts = []
     if recreated_topics:
