@@ -33,8 +33,9 @@
   "last_scale_down_time",
   "thread_status",
   "last_heartbeat",
-  "last_error",
-  "assigned_partitions"
+   "last_error",
+   "last_error_time",
+   "assigned_partitions"
  ],
  "fields": [
   {
@@ -201,13 +202,19 @@
    "label": "Last Heartbeat",
    "read_only": 1
   },
-  {
-   "fieldname": "last_error",
-   "fieldtype": "Small Text",
-   "label": "Last Error",
-   "read_only": 1
-  },
-  {
+   {
+    "fieldname": "last_error",
+    "fieldtype": "Small Text",
+    "label": "Last Error",
+    "read_only": 1
+   },
+   {
+    "fieldname": "last_error_time",
+    "fieldtype": "Datetime",
+    "label": "Last Error Time",
+    "read_only": 1
+   },
+   {
    "fieldname": "assigned_partitions",
    "fieldtype": "Small Text",
    "label": "Assigned Partitions",

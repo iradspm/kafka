@@ -404,7 +404,8 @@ class KafkaConsumer(Document):
             try:
                 frappe.db.set_value("Kafka Consumer", self.name, {
                     "thread_status": "error",
-                    "last_error": str(e)[:500]
+                    "last_error": str(e)[:500],
+                    "last_error_time": frappe.utils.now()
                 }, update_modified=False)
                 frappe.db.commit()
             except Exception:

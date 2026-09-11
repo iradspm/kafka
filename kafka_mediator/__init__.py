@@ -137,10 +137,17 @@ def restart_dead_consumers():
     Phase 1 — cheap DB-only check. Runs every minute.
     Detects consumers whose heartbeat has gone stale (thread died without updating status)
     and restarts them directly in the current process.
+    Skips consumers that errored less than FENCING_COOLDOWN seconds ago to avoid
+    re-fencing (Kafka static group fencing = 30s session timeout).
     """
+    FENCING_COOLDOWN = 35  # seconds — session.timeout.ms (30s) + 5s buffer
+
     site = frappe.local.site
     stale_threshold = frappe.utils.add_to_date(
         frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
+    )
+    cooldown_threshold = frappe.utils.add_to_date(
+        frappe.utils.now_datetime(), seconds=-FENCING_COOLDOWN
     )
     dead_consumers = frappe.get_all(
         "Kafka Consumer",
@@ -149,9 +156,13 @@ def restart_dead_consumers():
             ["thread_status", "in", ["running", "error", "restarting"]],
             ["last_heartbeat", "<", stale_threshold]
         ],
-        fields=["name", "topic", "cluster"]
+        fields=["name", "topic", "cluster", "last_error_time"]
     )
     for entry in dead_consumers:
+        # Skip if last error was recent — Kafka session still active
+        if entry.last_error_time and entry.last_error_time > cooldown_threshold:
+            continue
+
         try:
             consumer_doc = frappe.get_doc("Kafka Consumer", entry["name"])
             frappe.db.set_value("Kafka Consumer", entry["name"], "thread_status", "restarting", update_modified=False)
