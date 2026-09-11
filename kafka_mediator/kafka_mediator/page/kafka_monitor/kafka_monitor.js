@@ -199,7 +199,11 @@ var KafkaMonitor = {
 
         frappe.call({
             method: "kafka_mediator.api.topic.get_cluster_stats",
-            args: { cluster_name: self.cluster },
+            args: {
+                cluster_name: self.cluster,
+                start: 0,
+                page_length: self._topic_page_size
+            },
             error: function (r) {
                 self.$("#km-refresh-icon").removeClass("km-spinning");
                 var msg = (r && r.message) ? r.message : "Server error — check Error Log";
@@ -275,20 +279,10 @@ var KafkaMonitor = {
 
     // ── Render KPIs + table + charts ─────────────────────────────────────────
     render: function (data) {
-        var all_topics = data.topics || [];
-        this._all_topics_cache = all_topics;
+        var page_topics = data.topics || [];
+        var pagination = data.pagination || {};
 
-        // Filter by search
-        var search = this._topic_search.toLowerCase();
-        if (search) {
-            all_topics = all_topics.filter(function (t) {
-                return (t.topic_name || "").toLowerCase().indexOf(search) !== -1;
-            });
-        }
-        this._topic_total = all_topics.length;
-        this._filtered_topics = all_topics;
-
-        // KPIs
+        // KPIs — always accurate (computed server-side from all topics)
         this.$("#km-kpi-topics").text(data.total_topics || 0);
         this.$("#km-kpi-messages").text(this.fmt_num(data.total_messages || 0));
 
@@ -302,16 +296,24 @@ var KafkaMonitor = {
             (data.broker_status || "Connected") + '</span>'
         );
 
-        // Badge
-        this.$("#km-topic-count").text(this._topic_total);
+        // Badge — use total_topics (all), not page count
+        this.$("#km-topic-count").text(data.total_topics || 0);
+        this._topic_total = pagination.total || data.total_topics || page_topics.length;
 
-        // Table — first page
-        var topics = all_topics.slice(0, this._topic_page_size);
+        // Table — render current page
+        var topics = page_topics;
+        var search = this._topic_search.toLowerCase();
+        if (search) {
+            topics = topics.filter(function (t) {
+                return (t.topic_name || "").toLowerCase().indexOf(search) !== -1;
+            });
+        }
+        this._filtered_topics = topics;
         this._render_topic_table(topics);
         this._update_load_more();
 
-        // Charts always use all topics (unfiltered)
-        this._render_charts(data.topics || []);
+        // Charts — render current page topics
+        this._render_charts(page_topics);
     },
 
     _render_topic_table: function (topics) {
@@ -345,7 +347,7 @@ var KafkaMonitor = {
     _update_load_more: function () {
         var $wrap = this.$("#km-topics-load-more");
         var $btn = this.$("#km-topics-load-more-btn");
-        var loaded = Math.min(this._topic_page * this._topic_page_size + this._topic_page_size, this._topic_total);
+        var loaded = (this._topic_page + 1) * this._topic_page_size;
         if (loaded >= this._topic_total || !this._topic_total) {
             $wrap.hide();
         } else {
@@ -355,11 +357,35 @@ var KafkaMonitor = {
     },
 
     load_more_topics: function () {
-        this._topic_page++;
-        var all = this._filtered_topics || [];
-        var topics = all.slice(0, this._topic_page * this._topic_page_size + this._topic_page_size);
-        this._render_topic_table(topics);
-        this._update_load_more();
+        var self = this;
+        self._topic_page++;
+        var start = self._topic_page * self._topic_page_size;
+
+        frappe.call({
+            method: "kafka_mediator.api.topic.get_cluster_stats",
+            args: {
+                cluster_name: self.cluster,
+                start: start,
+                page_length: self._topic_page_size
+            },
+            callback: function (r) {
+                if (!r || r.status_code !== 200) return;
+                var page_topics = r.data.topics || [];
+                var pagination = r.data.pagination || {};
+
+                var topics = page_topics;
+                var search = self._topic_search.toLowerCase();
+                if (search) {
+                    topics = topics.filter(function (t) {
+                        return (t.topic_name || "").toLowerCase().indexOf(search) !== -1;
+                    });
+                }
+
+                self._filtered_topics = self._filtered_topics.concat(topics);
+                self._render_topic_table(self._filtered_topics);
+                self._update_load_more();
+            }
+        });
     },
 
     _status_pill: function (consumer_groups) {

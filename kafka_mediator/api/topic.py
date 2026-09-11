@@ -443,15 +443,14 @@ def get_topic_stats(**kwargs):
 def get_cluster_stats(**kwargs):
     """
     Summary stats for a cluster — broker status, totals, and a per-topic
-    breakdown including per-topic consumer counts.
-
-    GET /api/method/kafka_mediator.api.topic.get_cluster_stats
-        ?cluster_name=<cluster>
+    breakdown including per-topic consumer counts. Supports pagination.
     """
     payload = kwargs
     payload.pop("cmd", None)
 
     cluster_name = payload.get("cluster_name").strip()
+    start = int(payload.get("start") or 0)
+    page_length = int(payload.get("page_length") or 5)
 
     if not frappe.db.exists("Kafka Cluster", cluster_name):
         return format_response(
@@ -546,8 +545,9 @@ def get_cluster_stats(**kwargs):
                 "total_messages":  total_messages,
                 "total_lag":       total_lag,
                 "total_consumers": total_consumer_members,
-                "topics":          topics
-            }
+                "topics":          topics[start:start + page_length]
+            },
+            pagination={"total": len(topics), "start": start, "page_length": page_length}
         )
 
     except Exception as e:
