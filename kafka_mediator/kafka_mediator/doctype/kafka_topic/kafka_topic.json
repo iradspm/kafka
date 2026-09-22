@@ -23,7 +23,8 @@
    "in_list_view": 1,
    "label": "Cluster",
    "options": "Kafka Cluster",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "topic_name",
@@ -44,7 +45,8 @@
    "in_list_view": 1,
    "label": "Number of Partitions",
    "non_negative": 1,
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "default": "1",
@@ -53,36 +55,41 @@
    "in_list_view": 1,
    "label": "Replication Factor",
    "non_negative": 1,
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "message_count",
    "fieldtype": "Int",
    "label": "Message Count",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "lag",
    "fieldtype": "Int",
    "label": "Total Lag",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "active_consumers",
    "fieldtype": "Int",
    "label": "Active Consumers",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "last_updated",
    "fieldtype": "Datetime",
    "label": "Last Updated",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-23 15:29:25.931477",
+ "modified": "2026-09-23 00:25:47.573573",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Topic",

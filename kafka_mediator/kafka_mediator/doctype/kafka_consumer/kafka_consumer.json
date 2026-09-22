@@ -33,9 +33,9 @@
   "last_scale_down_time",
   "thread_status",
   "last_heartbeat",
-   "last_error",
-   "last_error_time",
-   "assigned_partitions"
+  "last_error",
+  "last_error_time",
+  "assigned_partitions"
  ],
  "fields": [
   {
@@ -44,7 +44,8 @@
    "in_list_view": 1,
    "label": "Cluster",
    "options": "Kafka Cluster",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "topic",
@@ -52,36 +53,42 @@
    "in_list_view": 1,
    "label": "Topic",
    "options": "Kafka Topic",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
+   "description": "All consumers on the same topic must share this value. Kafka assigns one partition per consumer in the group.",
    "fieldname": "consumer_group",
    "fieldtype": "Data",
    "label": "Consumer Group",
    "reqd": 1,
-   "description": "All consumers on the same topic must share this value. Kafka assigns one partition per consumer in the group."
+   "search_index": 1
   },
   {
    "fieldname": "api_endpoint",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "API Endpoint",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "api_username",
    "fieldtype": "Data",
-   "label": "API Username"
+   "label": "API Username",
+   "search_index": 1
   },
   {
    "fieldname": "api_password",
    "fieldtype": "Password",
-   "label": "API Password"
+   "label": "API Password",
+   "search_index": 1
   },
   {
    "fieldname": "api_key",
    "fieldtype": "Data",
-   "label": "API Key"
+   "label": "API Key",
+   "search_index": 1
   },
   {
    "fieldname": "column_break_vvtf",
@@ -91,130 +98,149 @@
    "fieldname": "output_topic",
    "fieldtype": "Link",
    "label": "Output Topic",
-   "options": "Kafka Topic"
+   "options": "Kafka Topic",
+   "search_index": 1
   },
   {
    "fieldname": "output_producer",
    "fieldtype": "Link",
    "label": "Output Producer",
-   "options": "Kafka Producer"
+   "options": "Kafka Producer",
+   "search_index": 1
   },
   {
    "default": "100",
    "fieldname": "max_lag_threshold",
    "fieldtype": "Int",
-   "label": "Max Lag Threshold"
+   "label": "Max Lag Threshold",
+   "search_index": 1
   },
   {
    "default": "20",
    "fieldname": "max_consumers",
    "fieldtype": "Int",
-   "label": "Max Consumers"
+   "label": "Max Consumers",
+   "search_index": 1
   },
   {
    "fieldname": "current_lag",
    "fieldtype": "Int",
    "label": "Current Lag",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "default": "1",
    "fieldname": "enabled",
    "fieldtype": "Check",
-   "label": "Enabled"
+   "label": "Enabled",
+   "search_index": 1
   },
   {
    "fieldname": "failure_topic",
    "fieldtype": "Link",
    "label": "Failure Topic",
-   "options": "Kafka Topic"
+   "options": "Kafka Topic",
+   "search_index": 1
   },
   {
+   "default": "0",
+   "depends_on": "failure_topic",
+   "description": "If checked and a Failure Topic is set, failed messages are republished to the failure topic instead of being left uncommitted for redelivery.",
    "fieldname": "requeue_on_failure",
    "fieldtype": "Check",
-   "label": "Requeue on Failure",
-   "description": "If checked and a Failure Topic is set, failed messages are republished to the failure topic instead of being left uncommitted for redelivery.",
-   "depends_on": "failure_topic"
+   "label": "Requeue on Failure"
   },
   {
    "default": "20",
    "fieldname": "min_lag_threshold",
    "fieldtype": "Int",
-   "label": "Min Lag Threshold"
+   "label": "Min Lag Threshold",
+   "search_index": 1
   },
   {
    "fieldname": "low_lag_count",
    "fieldtype": "Int",
    "label": "Low Lag Count",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "default": "120",
    "fieldname": "scale_up_cooldown",
    "fieldtype": "Int",
-   "label": "Scale Up Cooldown (Seconds)"
+   "label": "Scale Up Cooldown (Seconds)",
+   "search_index": 1
   },
   {
    "default": "600",
    "fieldname": "scale_down_cooldown",
    "fieldtype": "Int",
-   "label": "Scale Down Cooldown (Seconds)"
+   "label": "Scale Down Cooldown (Seconds)",
+   "search_index": 1
   },
   {
+   "description": "Overrides global Max Retries from Kafka Settings. Leave blank to use the global default.",
    "fieldname": "max_retries",
    "fieldtype": "Int",
    "label": "Max Retries",
-   "description": "Overrides global Max Retries from Kafka Settings. Leave blank to use the global default."
+   "search_index": 1
   },
   {
    "fieldname": "last_scale_up_time",
    "fieldtype": "Float",
    "label": "Last Scale Up Time",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "last_scale_down_time",
    "fieldtype": "Float",
    "label": "Last Scale Down Time",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "api_consumer_key",
    "fieldtype": "Password",
-   "label": "API Consumer Key"
+   "label": "API Consumer Key",
+   "search_index": 1
   },
   {
    "fieldname": "api_consumer_secret",
    "fieldtype": "Password",
-   "label": "API Consumer Secret"
+   "label": "API Consumer Secret",
+   "search_index": 1
   },
   {
    "fieldname": "thread_status",
    "fieldtype": "Select",
+   "in_list_view": 1,
    "label": "Thread Status",
    "options": "stopped\nrunning\nerror\nrestarting",
    "read_only": 1,
-   "in_list_view": 1
+   "search_index": 1
   },
   {
    "fieldname": "last_heartbeat",
    "fieldtype": "Datetime",
    "label": "Last Heartbeat",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
    "read_only": 1
   },
-   {
-    "fieldname": "last_error",
-    "fieldtype": "Small Text",
-    "label": "Last Error",
-    "read_only": 1
-   },
-   {
-    "fieldname": "last_error_time",
-    "fieldtype": "Datetime",
-    "label": "Last Error Time",
-    "read_only": 1
-   },
-   {
+  {
+   "fieldname": "last_error_time",
+   "fieldtype": "Datetime",
+   "label": "Last Error Time",
+   "read_only": 1
+  },
+  {
    "fieldname": "assigned_partitions",
    "fieldtype": "Small Text",
    "label": "Assigned Partitions",
@@ -223,7 +249,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-07 09:47:05.758194",
+ "modified": "2026-09-23 00:24:52.115799",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Consumer",

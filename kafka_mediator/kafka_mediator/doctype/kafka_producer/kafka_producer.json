@@ -17,7 +17,8 @@
    "in_list_view": 1,
    "label": "Cluster",
    "options": "Kafka Cluster",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "column_break_qmpk",
@@ -29,12 +30,13 @@
    "in_list_view": 1,
    "label": "Topic",
    "options": "Kafka Topic",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-06-10 22:50:52.111356",
+ "modified": "2026-09-23 00:25:13.030555",
  "modified_by": "Administrator",
  "module": "Kafka Mediator",
  "name": "Kafka Producer",
@@ -54,6 +56,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []
