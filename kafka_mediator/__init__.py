@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_STALE_SECONDS = 45
 RECONCILE_INTERVAL = 30  # min seconds between consumer reconcile sweeps
 
-# Serializes the reconcile sweep and throttles how often it runs, so the
-# before_request hook stays cheap on the hot path (one timestamp check per
-# request; a real sweep only every RECONCILE_INTERVAL seconds).
+# Serializes the reconcile sweep and throttles how often it runs. The lock is
+# held by the background sweep thread until it finishes, so only one sweep can
+# be in flight per process; the before_request hook itself never waits on it.
 _reconcile_lock = threading.Lock()
 _last_reconcile = 0.0
 # Names of consumers whose threads THIS process started and believes are alive.
@@ -32,87 +32,127 @@ def get_default_settings():
 
 
 def start_enabled_consumers():
-    """Reconcile consumer threads for all enabled consumers — continuously.
+    """Kick off a background reconcile sweep — never blocks the request.
 
-    Registered as a `before_request` hook so it runs inside the gunicorn/web
-    worker: daemon threads spawned here survive for the life of that process,
-    unlike threads spawned from an RQ scheduler job (which die when the job
-    returns). This both removes the need to manually scale up after a restart
-    AND self-heals threads that die mid-run, which the RQ watchdog cannot do.
+    Registered as a `before_request` hook so consumer daemon threads live for
+    the life of the gunicorn process (threads spawned from an RQ job die when
+    the job returns). This both removes the need to manually scale up after a
+    restart AND self-heals threads that die mid-run.
 
-    Cheap on the hot path: throttled to one real sweep per RECONCILE_INTERVAL
-    seconds. A sweep restarts any enabled consumer whose heartbeat is stale or
-    missing. A consumer this process already started and whose heartbeat is
-    fresh is skipped, so healthy threads are never double-started.
+    Hot path: one timestamp check. Every RECONCILE_INTERVAL seconds it spawns
+    a daemon thread that owns the reconcile lock and does all DB I/O on its
+    own connection. Previously the sweep ran inline on the request thread —
+    when the DB stalled, every gunicorn slot blocked here, port 8000 stopped
+    accepting, the tcp-socket liveness probe failed, and the pod entered a
+    kill/restart loop.
+
+    A sweep restarts any enabled consumer whose heartbeat is stale or missing.
+    A consumer this process already started (`_started_here`) with a fresh
+    heartbeat is skipped, so healthy threads are never double-started.
     """
     global _last_reconcile
     now = time.monotonic()
     if now - _last_reconcile < RECONCILE_INTERVAL:
         return
     if not _reconcile_lock.acquire(blocking=False):
-        return  # another request is already sweeping
+        return  # a sweep is already running
+    # We own the lock: either hand it to the background thread or release it.
     try:
         if time.monotonic() - _last_reconcile < RECONCILE_INTERVAL:
+            _reconcile_lock.release()
             return
         _last_reconcile = time.monotonic()
+        site = frappe.local.site  # cheap read while still on the request thread
+    except BaseException:
+        _reconcile_lock.release()
+        raise
+    try:
+        # Lock stays held until _reconcile_sweep finishes — prevents overlap.
+        threading.Thread(target=_reconcile_sweep, args=(site,), daemon=True).start()
+    except BaseException:
+        _reconcile_lock.release()
+        raise
+
+
+def _reconcile_sweep(site):
+    """Run the reconcile on a dedicated thread with its own DB connection.
+
+    Never call this on a request thread — its get_all/set_value calls can
+    block for as long as the DB is slow, and that must not consume gunicorn
+    worker slots.
+    """
+    try:
+        frappe.init(site=site)
+        frappe.connect()
+    except Exception as e:
         try:
-            site = frappe.local.site
-            stale_threshold = frappe.utils.add_to_date(
-                frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
-            )
-            stale = frappe.get_all(
-                "Kafka Consumer",
-                filters=[
-                    ["enabled", "=", 1],
-                    ["last_heartbeat", "<", stale_threshold],
-                ],
-                pluck="name",
-            )
-            never = frappe.get_all(
-                "Kafka Consumer",
-                filters=[["enabled", "=", 1], ["last_heartbeat", "is", "not set"]],
-                pluck="name",
-            )
-            to_start = list(dict.fromkeys(stale + never))
-            for name in to_start:
-                try:
-                    doc = frappe.get_doc("Kafka Consumer", name)
-                    frappe.db.set_value(
-                        "Kafka Consumer", name, "thread_status", "restarting",
-                        update_modified=False,
-                    )
-                    # Commit the status change before starting the thread so the
-                    # new thread's own thread_status write doesn't block on this
-                    # transaction's row lock (each consumer gets its own commit —
-                    # holding locks across the whole loop causes 1205s).
-                    try:
-                        frappe.db.commit()
-                    except Exception:
-                        pass
-                    threading.Thread(
-                        target=doc.consume_messages, args=(site,), daemon=True
-                    ).start()
-                    _started_here.add(name)
-                    logger.info(f"Reconcile: (re)started consumer thread for {name}")
-                except Exception as e:
-                    try:
-                        frappe.db.rollback()
-                    except Exception:
-                        pass
-                    frappe.log_error(
-                        f"Reconcile: {name}",
-                        f"Failed to start consumer {name}: {str(e)}"
-                    )
-        except Exception as e:
-            # Never let a reconcile failure break the request it piggybacked on.
+            _reconcile_lock.release()
+        except Exception:
+            pass
+        logger.error(f"Reconcile: failed to open DB connection for sweep: {e}")
+        return
+
+    try:
+        stale_threshold = frappe.utils.add_to_date(
+            frappe.utils.now_datetime(), seconds=-HEARTBEAT_STALE_SECONDS
+        )
+        stale = frappe.get_all(
+            "Kafka Consumer",
+            filters=[
+                ["enabled", "=", 1],
+                ["last_heartbeat", "<", stale_threshold],
+            ],
+            pluck="name",
+        )
+        never = frappe.get_all(
+            "Kafka Consumer",
+            filters=[["enabled", "=", 1], ["last_heartbeat", "is", "not set"]],
+            pluck="name",
+        )
+        to_start = list(dict.fromkeys(stale + never))
+        for name in to_start:
             try:
-                frappe.log_error(
-                    "start_enabled_consumers",
-                    f"Reconcile sweep failed: {str(e)}"
+                doc = frappe.get_doc("Kafka Consumer", name)
+                frappe.db.set_value(
+                    "Kafka Consumer", name, "thread_status", "restarting",
+                    update_modified=False,
                 )
-            except Exception:
-                pass
+                # Commit the status change before starting the thread so the
+                # new thread's own thread_status write doesn't block on this
+                # transaction's row lock (each consumer gets its own commit —
+                # holding locks across the whole loop causes 1205s).
+                try:
+                    frappe.db.commit()
+                except Exception:
+                    pass
+                threading.Thread(
+                    target=doc.consume_messages, args=(site,), daemon=True
+                ).start()
+                _started_here.add(name)
+                logger.info(f"Reconcile: (re)started consumer thread for {name}")
+            except Exception as e:
+                try:
+                    frappe.db.rollback()
+                except Exception:
+                    pass
+                frappe.log_error(
+                    f"Reconcile: {name}",
+                    f"Failed to start consumer {name}: {str(e)}"
+                )
+    except Exception as e:
+        # Never let a reconcile failure take down anything else.
+        try:
+            frappe.log_error(
+                "start_enabled_consumers",
+                f"Reconcile sweep failed: {str(e)}"
+            )
+        except Exception:
+            pass
     finally:
+        try:
+            frappe.destroy()
+        except Exception:
+            pass
         _reconcile_lock.release()
 
 

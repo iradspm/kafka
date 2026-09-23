@@ -224,9 +224,11 @@ scheduler_events = {
 
 # Request Events
 # ----------------
-# Runs in the gunicorn web worker. start_enabled_consumers is guarded to run
-# exactly once per process, spawning consumer threads that survive for the life
-# of the web worker (threads started from RQ scheduler jobs die when the job ends).
+# Hot-path guard only: checks a timestamp and, at most once per
+# RECONCILE_INTERVAL, spawns a background thread that does the actual DB
+# work on its own connection. Never perform DB I/O here — blocking on this
+# hook exhausts gunicorn threads when the DB stalls, fails the tcp-socket
+# :8000 liveness probe, and puts the pod in a kill/restart loop.
 before_request = ["kafka_mediator.start_enabled_consumers"]
 # after_request = ["kafka_mediator.utils.after_request"]
 
