@@ -81,20 +81,28 @@ def start_enabled_consumers():
                         "Kafka Consumer", name, "thread_status", "restarting",
                         update_modified=False,
                     )
+                    # Commit the status change before starting the thread so the
+                    # new thread's own thread_status write doesn't block on this
+                    # transaction's row lock (each consumer gets its own commit —
+                    # holding locks across the whole loop causes 1205s).
+                    try:
+                        frappe.db.commit()
+                    except Exception:
+                        pass
                     threading.Thread(
                         target=doc.consume_messages, args=(site,), daemon=True
                     ).start()
                     _started_here.add(name)
                     logger.info(f"Reconcile: (re)started consumer thread for {name}")
                 except Exception as e:
+                    try:
+                        frappe.db.rollback()
+                    except Exception:
+                        pass
                     frappe.log_error(
                         f"Reconcile: {name}",
                         f"Failed to start consumer {name}: {str(e)}"
                     )
-            try:
-                frappe.db.commit()
-            except Exception:
-                pass
         except Exception as e:
             # Never let a reconcile failure break the request it piggybacked on.
             try:
@@ -444,6 +452,10 @@ def monitor_kafka_metrics():
                     SET `current_lag` = %s
                     WHERE `name` IN ({placeholders})
                 """, [lag] + member_names, auto_commit=False)
+                # Commit immediately — SMS/scaling below do slow network I/O and
+                # must not hold row locks on every consumer in the group (that
+                # starves heartbeats and thread_status writes → error 1205).
+                frappe.db.commit()
 
             current_consumers = len(frappe.get_all("Kafka Consumer", filters={
                 "topic": consumer.topic, "consumer_group": consumer.consumer_group, "enabled": 1

@@ -168,23 +168,27 @@ app_license = "mit"
 
 scheduler_events = {
     "cron": {
-        # Topic stats, scaling monitor, lag healing, and site availability — all every 5 minutes
-        "*/5 * * * *": [
+        # Topic stats, scaling monitor, lag healing, and site availability — every
+        # 10 minutes (was 5) to reduce concurrent writes to tabKafka Consumer and
+        # ease row-lock contention with consumer heartbeats.
+        "*/10 * * * *": [
             "kafka_mediator.monitor_kafka_metrics",
             "kafka_mediator.update_topic_stats",
             "kafka_mediator.heal_lagging_groups",
             "kafka_mediator.api.site_monitor.check_sites",
         ],
-        # Cluster stats run one minute later so topic stats are always fresh
-        "1-56/5 * * * *": [
+        # Cluster stats run one minute after topic stats so they see fresh data
+        "1-59/10 * * * *": [
             "kafka_mediator.update_cluster_stats",
         ],
-        # Dead consumer watchdog — cheap DB-only stale-heartbeat check, every minute
-        "* * * * *": [
+        # Dead consumer watchdog — every 2 minutes (was 1) to cut lock churn in
+        # half while still restarting dead consumers well within the 45s stale
+        # heartbeat threshold plus fencing cooldown.
+        "*/2 * * * *": [
             "kafka_mediator.restart_dead_consumers",
         ],
-        # Clean up excess disabled consumer docs every 30 min
-        "*/30 * * * *": [
+        # Clean up excess disabled consumer docs hourly (was every 30 min)
+        "0 * * * *": [
             "kafka_mediator.cleanup_orphaned_consumers",
         ],
     }

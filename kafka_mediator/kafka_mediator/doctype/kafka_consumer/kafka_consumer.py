@@ -290,11 +290,25 @@ class KafkaConsumer(Document):
                         if not valid_msgs:
                             continue
 
-                        # Submit all messages to the executor concurrently
-                        futures = {
-                            self._executor.submit(self._process_message, msg): msg
-                            for msg in valid_msgs
-                        }
+                        # Submit all messages to the executor concurrently.
+                        # During gunicorn worker shutdown/recycle, Python's atexit
+                        # hook shuts the ThreadPoolExecutor down first; submit()
+                        # then raises RuntimeError. Treat that as a clean exit —
+                        # otherwise this logs an error and retries every 5s until
+                        # the process dies.
+                        try:
+                            futures = {
+                                self._executor.submit(self._process_message, msg): msg
+                                for msg in valid_msgs
+                            }
+                        except RuntimeError as e:
+                            if "cannot schedule new futures" in str(e):
+                                logger.info(
+                                    f"Consumer {self.name}: interpreter shutting down, "
+                                    "stopping consumer loop."
+                                )
+                                break
+                            raise
 
                         # Wait for all, keep Kafka heartbeat alive while waiting
                         results = []  # list of (msg, should_commit bool, api_response)
